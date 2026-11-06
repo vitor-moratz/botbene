@@ -15,6 +15,8 @@ from app.market.candle import Candle
 # Instrumentos de binária ("-op"): os mesmos que o bot lê e opera. A primeira pesquisa (nov/2026) usou
 # os nomes sem sufixo, que na IQ são outro instrumento, com preço um pouco diferente.
 DEFAULT_ASSETS = ("EURUSD-op", "GBPUSD-op", "USDJPY-op", "AUDUSD-op", "EURJPY-op", "EURGBP-op")
+# Os 6 de cima mais os 6 que serviram de teste "nunca vistos" (03/11): todos guardados toda semana.
+RESEARCH_ASSETS = DEFAULT_ASSETS + ("AUDJPY-op", "NZDUSD-op", "GBPJPY-op", "AUDCAD-op", "EURNZD-op", "GBPAUD-op")
 SUB_TF = 5
 BATCH = 1000
 

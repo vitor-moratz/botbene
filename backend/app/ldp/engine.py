@@ -77,9 +77,9 @@ class LdpEngine:
             a = self.infos[-2]
             structures += taxa_dividida(a, info)
             structures += td_topo_fundo(a, info, self.candles, cfg)
-            ind = indecisao(a, info)
-            if ind and len(self.infos) >= 3 and indecisao(self.infos[-3], a):
-                prev_side = indecisao(self.infos[-3], a)[0].detail
+            ind = indecisao(a, info, cfg.wick_tol_pct)
+            if ind and len(self.infos) >= 3 and indecisao(self.infos[-3], a, cfg.wick_tol_pct):
+                prev_side = indecisao(self.infos[-3], a, cfg.wick_tol_pct)[0].detail
                 if prev_side == ind[0].detail:
                     ind = [Structure("tripla_posicao", ind[0].index, self.infos[-3].index, 0, ind[0].marks, 111, ind[0].detail)]
             structures += ind

@@ -77,7 +77,7 @@
       <div class="bot-control">
         <div class="field">
           <span class="field-label">Pares</span>
-          <button class="link-btn" id="assets-text" title="Escolher os pares na Configuração">EURUSD</button>
+          <button class="link-btn" id="assets-text" title="Escolher os pares na Configuração">—</button>
         </div>
         <div class="field">
           <span class="field-label">Vela</span>
@@ -121,6 +121,15 @@
           </div>
         </div>
 
+        <!-- Placar de validação: a estratégia principal está provando vantagem ao vivo? -->
+        <div class="card validation-card" id="validation" aria-live="polite">
+          <div class="card-head">
+            <h2>Validação ao vivo <span class="tag" id="val-tag">estratégia principal</span></h2>
+            <span class="muted small" id="val-since"></span>
+          </div>
+          <div id="val-body"><p class="muted">Carregando…</p></div>
+        </div>
+
         <div class="grid-main">
           <div class="card chart-card">
             <div class="card-head">
@@ -138,11 +147,15 @@
               </div>
             </div>
             <div class="chart-tools">
-              <div class="toggles" id="script-toggles" role="group" aria-label="Scripts no gráfico"></div>
+              <div class="toggles" id="script-toggles" role="group" aria-label="Estratégias no gráfico"></div>
               <label class="check"><input type="checkbox" id="show-backtest"> mostrar sinais do backtest</label>
+              <label class="check"><input type="checkbox" id="show-reading"> mostrar a leitura do estudo</label>
             </div>
+            <div class="reading-legend" id="reading-legend" hidden></div>
             <div class="readout" id="readout">Passe o mouse sobre uma vela para ver os detalhes.</div>
-            <div id="chart" class="chart" aria-label="Gráfico de velas com linhas e sinais"></div>
+            <div class="chart-box" id="chart-box">
+              <div id="chart" class="chart" aria-label="Gráfico de velas com linhas e sinais"></div>
+            </div>
             <div class="line-legend" id="line-legend"></div>
           </div>
 
@@ -155,10 +168,27 @@
             </div>
             <div class="card orders-card">
               <div class="card-head">
-                <h2><span id="orders-title">Ordens na conta demo</span> <span class="tag">hoje</span></h2>
+                <h2 id="orders-title">Ordens</h2>
               </div>
               <div id="risk-body" class="risk"></div>
+              <div class="orders-cap">Hoje</div>
               <ul id="orders" class="feed"><li class="empty">Nenhuma ordem hoje.</li></ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <h2>Leitura da última vela <span class="tag">apostila</span></h2>
+            <div id="reading" class="reading"><p class="muted">Inicie o bot para ver a leitura.</p></div>
+          </div>
+          <div class="stack-col">
+            <div class="card">
+              <h2>Placar de hoje por estratégia</h2>
+              <div class="table-wrap"><table class="data">
+                <thead><tr><th>Estratégia</th><th class="num">Entradas</th><th class="num">W · L</th><th class="num">Acerto</th><th class="num">Resultado</th></tr></thead>
+                <tbody id="p-board"><tr><td colspan="5" class="muted">—</td></tr></tbody>
+              </table></div>
             </div>
             <div class="card feed-card">
               <div class="card-head">
@@ -169,20 +199,6 @@
             </div>
           </div>
         </div>
-
-        <div class="grid-2">
-          <div class="card">
-            <h2>Leitura da última vela <span class="tag">apostila</span></h2>
-            <div id="reading" class="reading"><p class="muted">Inicie o bot para ver a leitura.</p></div>
-          </div>
-          <div class="card">
-            <h2>Placar de hoje por script</h2>
-            <div class="table-wrap"><table class="data">
-              <thead><tr><th>Script</th><th class="num">Entradas</th><th class="num">W · L</th><th class="num">Acerto</th><th class="num">Resultado</th></tr></thead>
-              <tbody id="p-board"><tr><td colspan="5" class="muted">—</td></tr></tbody>
-            </table></div>
-          </div>
-        </div>
       </section>
 
       <!-- ============================ ENTRADAS ============================ -->
@@ -191,7 +207,7 @@
           <div class="segmented" id="e-period" role="group" aria-label="Período">
             <button data-v="hoje" aria-pressed="true">Hoje</button><button data-v="7d" aria-pressed="false">7 dias</button><button data-v="mes" aria-pressed="false">Mês</button><button data-v="geral" aria-pressed="false">Geral</button>
           </div>
-          <div class="field"><label for="e-strategy">Script</label><select id="e-strategy"><option value="">Todos</option></select></div>
+          <div class="field"><label for="e-strategy">Estratégia</label><select id="e-strategy"><option value="">Todas</option></select></div>
           <div class="field"><label for="e-result">Resultado</label>
             <select id="e-result">
               <option value="">Todos</option><option value="win">Win</option><option value="loss">Loss</option>
@@ -207,13 +223,13 @@
           <div class="table-wrap">
             <table class="data">
               <thead><tr>
-                <th>Horário</th><th>Ativo</th><th>Script</th><th>Direção</th><th>Setup</th>
+                <th>Horário</th><th>Ativo</th><th>Estratégia</th><th>Direção</th><th>Setup</th>
                 <th class="num">Entrada</th><th class="num">Saída</th><th>Resultado</th><th class="num">Resultado (entradas)</th><th>Origem</th>
               </tr></thead>
               <tbody id="e-body"><tr><td colspan="10" class="muted">Carregando…</td></tr></tbody>
             </table>
           </div>
-          <p class="muted small foot-note">Scripts de fechamento: entrada na abertura da vela seguinte ao sinal. Apostila (dentro da vela): entrada no preço do momento do gatilho. Saída = fechamento da vela de entrada (opção de 1 vela). Horários de Brasília. Estas são as entradas avaliadas pelo bot (paper); as ordens de verdade na demo ficam no card "Ordens na conta demo" do Painel.</p>
+          <p class="muted small foot-note">Entrada no preço do momento do gatilho (nos registros antigos de scripts, na abertura da vela seguinte ao sinal). Saída = fechamento da vela de entrada (opção de 1 vela). Horários de Brasília. Estas são as entradas avaliadas pelo bot (paper); as ordens de verdade ficam no card de ordens do Painel.</p>
         </div>
       </section>
 
@@ -223,7 +239,7 @@
           <div class="segmented" id="d-period" role="group" aria-label="Período">
             <button data-v="hoje" aria-pressed="false">Hoje</button><button data-v="7d" aria-pressed="false">7 dias</button><button data-v="mes" aria-pressed="true">Mês</button><button data-v="geral" aria-pressed="false">Geral</button>
           </div>
-          <div class="field"><label for="d-strategy">Script</label><select id="d-strategy"><option value="">Todos</option></select></div>
+          <div class="field"><label for="d-strategy">Estratégia</label><select id="d-strategy"><option value="">Todas</option></select></div>
           <div class="field"><label for="d-asset">Ativo</label><select id="d-asset"><option value="">Todos</option></select></div>
           <div class="field"><label for="d-origin">Origem</label>
             <select id="d-origin"><option value="ao_vivo">Ao vivo</option><option value="backtest">Backtest (referência)</option></select>
@@ -256,7 +272,7 @@
         </div>
 
         <div class="card">
-          <h2>Acerto por script</h2>
+          <h2>Acerto por estratégia</h2>
           <p class="muted small">Barra = acerto; faixa clara = intervalo de confiança de 95% (quanto o número ainda pode variar); traço = mínimo para empatar. Só dá para confiar quando a faixa inteira passa do traço.</p>
           <div id="d-bars" class="bars"></div>
         </div>
@@ -265,7 +281,7 @@
           <div class="card">
             <h2>Por setup</h2>
             <div class="table-wrap"><table class="data"><thead><tr>
-              <th>Script</th><th>Setup</th><th class="num">Entradas</th><th class="num">Acerto</th><th class="num">IC 95%</th><th class="num">Resultado</th>
+              <th>Estratégia</th><th>Setup</th><th class="num">Entradas</th><th class="num">Acerto</th><th class="num">IC 95%</th><th class="num">Resultado</th>
             </tr></thead><tbody id="d-setups"></tbody></table></div>
           </div>
           <div class="card">
@@ -304,18 +320,24 @@
             <fieldset class="cfg-radio">
               <legend>Modo</legend>
               <label><input type="radio" name="cfg-mode" value="sinais"> <span><strong>Só sinais</strong><br><span class="muted small">O bot avalia cada entrada sem enviar ordem (modo paper).</span></span></label>
-              <label><input type="radio" name="cfg-mode" value="aprovacao"> <span><strong>Aprovação: você decide cada entrada</strong><br><span class="muted small">Cada entrada aparece no topo da tela com o gráfico, com bipe. Aprovou, a ordem vai para a conta demo quando o gatilho disparar.</span></span></label>
-              <label><input type="radio" name="cfg-mode" value="automatico"> <span><strong>Automático: o bot entra sozinho</strong><br><span class="muted small">Sem perguntar e sem cartão na tela: se o gatilho disparar, a ordem vai para a conta demo. Bom para deixar rodando e juntar resultado.</span></span></label>
+              <label><input type="radio" name="cfg-mode" value="aprovacao"> <span><strong>Aprovação: você decide cada entrada</strong><br><span class="muted small">Cada entrada aparece no topo da tela com o gráfico, com bipe. Aprovou, a ordem vai para a conta escolhida (Demo ou Real, na barra lateral) quando o gatilho disparar.</span></span></label>
+              <label><input type="radio" name="cfg-mode" value="automatico"> <span><strong>Automático: o bot entra sozinho</strong><br><span class="muted small">Sem perguntar e sem cartão na tela: se o gatilho disparar, a ordem vai para a conta escolhida (Demo ou Real, na barra lateral). Bom para deixar rodando e juntar resultado.</span></span></label>
               <label><input type="radio" name="cfg-mode" value="automatico_veto"> <span><strong>Automático com veto: entra sozinho, mas você pode cancelar</strong> <span class="tag">recomendado</span><br><span class="muted small">O cartão aparece com bipe já aprovado. Se você não fizer nada, a ordem sai no exato toque do gatilho (onde está a vantagem medida); se clicar em "Cancelar esta entrada", não sai.</span></span></label>
             </fieldset>
             <fieldset class="cfg-checks">
-              <legend>Estratégias que operam (aprovação ou automático)</legend>
-              <label><input type="checkbox" name="cfg-strat" value="retracao_comando"> Apostila · retração no comando <span class="muted small">(~54% fora da amostra · empate 54,3% · ainda sem vantagem comprovada)</span></label>
-              <label><input type="checkbox" name="cfg-strat" value="ldp_apostila"> Apostila · marcações <span class="muted small">(48% na pesquisa · não recomendado)</span></label>
+              <legend>Estratégias</legend>
+              <p class="muted small"><strong>Observar</strong> anota e mede, sem mandar ordem. <strong>Operar</strong> pode mandar ordem, conforme o modo acima, com uma ordem por par e vela. Ligar ou desligar uma estratégia vale no próximo início do bot; trocar entre Observar e Operar vale na hora.</p>
+              <table class="strat-table">
+                <thead><tr><th scope="col">Estratégia</th><th scope="col">Desligada</th><th scope="col">Observar</th><th scope="col">Operar</th></tr></thead>
+                <tbody id="cfg-strats"></tbody>
+              </table>
             </fieldset>
             <fieldset class="cfg-checks">
-              <legend>Scripts de comparação</legend>
-              <label><input type="checkbox" id="cfg-comparison"> <span>Rodar também os scripts de comparação<br><span class="muted small">LDP v1.3, regra das linhas, WIKI PRO e marcações. Eles nunca mandam ordem: só anotam o que teriam feito, para comparar no Desempenho. Desligados, o bot e as telas ficam só com a estratégia que opera. Vale no próximo início do bot.</span></span></label>
+              <legend>Ajuda visual no gráfico</legend>
+              <p class="muted small">Scripts só desenham: nunca decidem entrada e não entram nas estatísticas.</p>
+              <label><input type="checkbox" name="cfg-script" value="ldp_lines"> <span>Linhas do LDP v1.3 <span class="muted small">(50% do último comando de alta e de baixa)</span></span></label>
+              <label><input type="checkbox" name="cfg-script" value="ldp_arrows"> <span>Setas CALL e PUT do LDP v1.3</span></label>
+              <label><input type="checkbox" name="cfg-script" value="wiki_pro"> <span>Setas do WIKI PRO V2.1</span></label>
             </fieldset>
             <fieldset class="cfg-checks">
               <legend>Pares que o bot acompanha <span class="muted small">(até 8)</span></legend>
@@ -333,7 +355,7 @@
           </div>
 
           <div class="card">
-            <h2>Gestão de risco <span class="tag">ordens na demo</span></h2>
+            <h2>Gestão de risco</h2>
             <div class="cfg-grid">
               <div class="field"><label for="cfg-stake">Valor de cada entrada</label><input id="cfg-stake" type="number" min="1" step="0.5"></div>
               <div class="field"><label for="cfg-stop-win">Stop win</label><input id="cfg-stop-win" type="number" min="0" step="1" placeholder="desligado"></div>
@@ -341,7 +363,16 @@
               <div class="field"><label for="cfg-max-trades">Máximo de entradas por sessão</label><input id="cfg-max-trades" type="number" min="1" step="1" placeholder="sem limite"></div>
               <div class="field"><label for="cfg-max-losses">Pausar depois de X perdas seguidas</label><input id="cfg-max-losses" type="number" min="1" step="1" placeholder="sem pausa"></div>
             </div>
-            <p class="muted small">Valores na moeda da conta (a demo da IQ é em dólar). O stop loss conta o pior caso: uma ordem nova só sai se, perdendo ela e as que estão abertas, a perda da sessão não passar do limite.</p>
+            <p class="muted small">Valores na moeda da conta. O stop loss conta o pior caso: uma ordem nova só sai se, perdendo ela e as que estão abertas, a perda da sessão não passar do limite.</p>
+            <fieldset class="cfg-checks">
+              <legend>Filtros de entrada</legend>
+              <div class="cfg-grid">
+                <div class="field"><label for="cfg-min-payout">Payout mínimo (%)</label><input id="cfg-min-payout" type="number" min="50" max="100" step="1" placeholder="sem mínimo"></div>
+                <div class="field"><label for="cfg-hours-start">Operar das</label><input id="cfg-hours-start" type="time"></div>
+                <div class="field"><label for="cfg-hours-end">até as</label><input id="cfg-hours-end" type="time"></div>
+              </div>
+              <p class="muted small">Com payout menor, o acerto para empatar sobe: 85% → 54,1%, 80% → 55,6%, 75% → 57,1%. O horário é o de Brasília; deixe vazio para operar o dia todo (se o fim for antes do início, a janela passa da meia-noite). Fora dos filtros o bot continua medindo a estratégia, mas não abre pedido nem manda ordem.</p>
+            </fieldset>
             <fieldset class="cfg-checks">
               <legend>Martingale com análise</legend>
               <label><input type="checkbox" id="cfg-martingale"> <span>Ligar martingale<br><span class="muted small">Depois de uma perda, a próxima entrada <strong>válida da estratégia e aprovada por você</strong> vale mais, para recuperar o ciclo. Nunca entra às cegas na vela seguinte, e só uma ordem fica aberta por vez.</span></span></label>
@@ -354,7 +385,7 @@
 
           <div class="card">
             <h2>Dados</h2>
-            <p class="muted small">Zerar o histórico apaga as entradas, as ordens da demo, as sessões e as velas guardadas pelo bot, para começar a contagem do zero. Antes, o BotBene guarda uma cópia em <code>data/backups/</code>. A configuração (login, pares, valores) e a base de pesquisa continuam. Só funciona com o bot parado.</p>
+            <p class="muted small">Zerar o histórico apaga as entradas, as ordens, as sessões e as velas guardadas pelo bot, para começar a contagem do zero. Antes, o BotBene guarda uma cópia em <code>data/backups/</code>. A configuração (login, pares, valores) e a base de pesquisa continuam. Só funciona com o bot parado.</p>
             <div class="cfg-actions">
               <button type="button" class="ghost-btn" id="cfg-reset">Zerar histórico do bot</button>
               <span class="small" id="cfg-reset-result" role="status"></span>

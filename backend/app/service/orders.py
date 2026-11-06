@@ -11,9 +11,9 @@ import threading
 import time
 from collections.abc import Callable
 
-from app.broker.base import Broker, BrokerError
+from app.broker.base import Broker
 from app.db.database import Database
-from app.paper import LOSS
+from app.paper import DRAW, LOSS, WIN
 from app.risk import RiskConfig, RiskManager
 from app.service.events import EventHub
 
@@ -31,13 +31,21 @@ class OrderManager:
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], float] = time.time,
         threaded: bool = True,
+        current_broker: Callable[[], Broker | None] | None = None,
     ) -> None:
         self.db, self.hub = db, hub
         self._broker = broker_provider
+        # Conexão atual, sem abrir uma nova: se o bot reconectou durante a ordem, o resultado pode chegar por ela.
+        self._current = current_broker
         self._sleep, self._now = sleep, now
         self._threaded = threaded
         self._lock = threading.Lock()
         self.risk = RiskManager()
+
+    @property
+    def open_count(self) -> int:
+        with self._lock:
+            return self.risk.open_orders
 
     def reset(self, cfg: RiskConfig) -> None:
         with self._lock:
@@ -47,6 +55,16 @@ class OrderManager:
         """Muda valor/stops no meio da sessão sem zerar o placar."""
         with self._lock:
             self.risk.cfg = cfg
+
+    def restore(self, rows: list[dict]) -> None:
+        """Refaz o placar da sessão a partir das ordens gravadas (o servidor reiniciou no meio dela).
+        Sem isso, o stop loss voltaria a contar do zero."""
+        with self._lock:
+            for o in sorted(rows, key=lambda r: (r["requested_at"], r["id"])):
+                if o["status"] in (WIN, LOSS, DRAW):
+                    self.risk.closed(o["status"], o.get("profit") or 0.0, o["amount"])
+                elif o["status"] == "sem_resultado":  # como em _run: para a gestão de risco conta como perda
+                    self.risk.closed(LOSS, -o["amount"], o["amount"])
 
     def snapshot(self, payout: float = 0.85) -> dict:
         with self._lock:
@@ -91,11 +109,7 @@ class OrderManager:
             self._sleep(wait + 1)
         give_up = ticket.expires_at + RESULT_TIMEOUT
         while True:
-            try:
-                res = broker.order_result(ticket)
-            except BrokerError as exc:
-                log.warning("Resultado da ordem %s: %s", row["id"], exc)
-                res = None
+            res = self._result(row["id"], ticket, broker)
             if res is not None:
                 with self._lock:
                     self.risk.closed(res.result, res.profit, row["amount"])
@@ -109,6 +123,23 @@ class OrderManager:
                                                    error="A IQ não informou o resultado; confira no histórico da corretora"))
                 return
             self._sleep(1)
+
+    def _result(self, order_id: int, ticket, broker: Broker):
+        """Procura o resultado na conexão que enviou a ordem e, se o bot reconectou, também na atual.
+        Qualquer falha aqui só adia: depois de RESULT_TIMEOUT a ordem fica "sem_resultado"."""
+        brokers = [broker]
+        current = self._current() if self._current is not None else None
+        if current is not None and current is not broker:
+            brokers.append(current)
+        for b in brokers:
+            try:
+                res = b.order_result(ticket)
+            except Exception as exc:  # noqa: BLE001 - conexão fechada no meio, erro da biblioteca etc.
+                log.debug("Resultado da ordem %s: %s", order_id, exc)
+                continue
+            if res is not None:
+                return res
+        return None
 
     def _publish(self, row: dict | None) -> None:
         if row is not None:

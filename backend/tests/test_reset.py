@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.api.factory import create_app
 from app.config import Settings
+from app.strategies import default_strategies
 from tests.fakes import FakeBroker
 from tests.helpers import random_walk
 from tests.test_api import wait_status
@@ -16,7 +17,8 @@ def test_zera_com_copia_e_mantem_a_configuracao(tmp_path):
     broker = FakeBroker(candles[:500], candles[500:])
     settings = Settings(_env_file=None, data_dir=tmp_path, history_candles=500)
     with TestClient(create_app(settings=settings, broker_factory=lambda: broker, start_resolver=False)) as client:
-        client.put("/api/config", json={"stake": 3, "assets": ["EURUSD-op"], "comparison": True})
+        client.put("/api/config", json={"stake": 3, "assets": ["EURUSD-op"]})
+        client.app.state.bot._strategies_factory = default_strategies  # para ter sinais a apagar
         client.post("/api/bot/start", json={})
         wait_status(client, "rodando")
         assert client.post("/api/data/reset").status_code == 409  # com o bot rodando, não deixa

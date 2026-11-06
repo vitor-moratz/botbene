@@ -130,8 +130,8 @@ Pronto, está instalado.
      | Automático | Entra sozinho, sem cartão na tela |
      | **Automático com veto** | Entra sozinho, mas mostra o cartão e deixa cancelar |
 
-   - **Estratégias que operam:** deixe **Apostila · retração no comando** marcada.
-   - **Scripts de comparação:** deixe desligado. Ligados, eles só registram o que teriam feito e nunca mandam ordem.
+   - **Estratégias:** cada uma fica em **Desligada**, **Observar** (anota e mede, sem mandar ordem) ou **Operar** (pode mandar ordem, conforme o modo). Deixe **Apostila · retração no comando** em **Operar**. Ligar ou desligar vale no próximo início do bot; trocar entre Observar e Operar vale na hora.
+   - **Ajuda visual no gráfico:** as linhas e setas dos scripts (LDP v1.3, WIKI PRO). Eles só desenham: nunca decidem entrada e não entram nas estatísticas.
    - **Pares:** escolha até 8. Os pares normais da binária terminam em **`-op`** (ex.: `EURUSD-op`). Os `-OTC` são o mercado de fim de semana.
    - **Vela:** 1 minuto.
 5. **Gestão de risco:**
@@ -143,9 +143,13 @@ Pronto, está instalado.
    | Stop loss | Só abre uma ordem nova se, perdendo ela e as que ainda estão abertas, a perda da sessão não passar deste valor | 20 |
    | Máximo de entradas por sessão | Limite de ordens desde que você clicou em Iniciar bot | 30 |
    | Pausar depois de X perdas seguidas | Para depois de X perdas em sequência | 4 |
+   | Payout mínimo (%) | Não abre pedido nem manda ordem em par com payout menor. Com payout menor, o acerto para empatar sobe (85% → 54,1%, 80% → 55,6%, 75% → 57,1%) | 80 |
+   | Operar das / até as | Janela de operação, no horário de Brasília. Vazio = o dia todo. Se o fim for antes do início, passa da meia-noite | Vazio |
    | Martingale com análise | Depois de uma perda, a próxima entrada **válida da estratégia** vale mais, o bastante para recuperar o ciclo (até 2 gales). Nunca entra às cegas na vela seguinte, e o ciclo inteiro precisa caber no stop loss | Desligado |
 
    *Sessão* = do clique em **Iniciar bot** até o bot parar.
+
+   Fora dos dois filtros (payout e horário), o bot continua medindo a estratégia, mas não opera.
 
 6. Clique em **Salvar configuração**.
 
@@ -156,6 +160,7 @@ Na barra da esquerda, confira que a conta está em **Demo**.
 1. Abra o **BotBene** e clique em **Iniciar bot**, no topo.
 2. Deixe rodando. Os pedidos aparecem de tempos em tempos, e só cerca de **8 em cada 100** viram ordem, porque o preço precisa recuar até o gatilho nos primeiros 15 segundos da vela. Muitos pedidos sem ordem é o normal.
 3. Quando aparecer um pedido, o cartão no topo mostra o gráfico com a vela de comando marcada, a linha do gatilho, a contagem dos 15 s, o valor e o vencimento.
+   - **Botões do gráfico** (embaixo, no centro, aqui e no gráfico do Painel): **−** e **+** para ver mais ou menos velas, e o alvo para voltar ao preço atual. O alvo fica azul quando a vela atual saiu da tela. A rodinha do mouse e o arrastar também funcionam.
 4. Quando o pedido termina, o cartão de resultado deixa claro o que aconteceu:
 
    | Cartão | Significa |
@@ -165,13 +170,19 @@ Na barra da esquerda, confira que a conta está em **Demo**.
    | ✗ **A ORDEM NÃO FOI ENVIADA** | A gestão de risco bloqueou (ex.: stop atingido) ou a corretora recusou. O motivo aparece no cartão |
 
 5. **Painel:** resultado e acerto de hoje, o gráfico (troque o par em **Ver o par**), a próxima entrada armada e o quadro **Ordens**, com cada ordem marcada como *Enviada* ou *Não enviada* e o resultado.
+   - **No gráfico:** a marca **ENTRADA CALL** ou **ENTRADA PUT**, com o preço e ✓ / ✗ / …, é uma ordem enviada; enquanto ela está aberta, uma linha mostra o preço de entrada. Seta pequena é uma entrada que a estratégia só anotou, sem ordem. **CALL** e **PUT** sem a palavra ENTRADA são do script LDP: só desenho, o bot não opera neles. O gráfico mostra um par por vez: uma ordem em outro par aparece ao escolher esse par em **Ver o par**.
+   - **Mostrar sinais do backtest:** ao iniciar, o bot aplica as estratégias nas velas já carregadas e marca onde elas teriam entrado, com o resultado. Não são ordens e não contam nos números do Painel. Serve para conferir a regra com os olhos: marque a opção, passe o mouse na seta e veja se você também entraria ali.
+   - **Mostrar a leitura do estudo:** desenha lotes (caixas), regiões (faixas) e padrões (rótulos como NA, NP, DP), e diz o cenário atual. Passe o mouse na vela para ver cada padrão com a página da apostila. Só desenho: nenhuma estratégia usa isso ainda. Enquanto está ligada, os scripts saem do gráfico para não embolar.
+   - O quadro **Validação ao vivo** responde à pergunta principal: a estratégia está provando vantagem? Ele conta só as entradas ao vivo, desde o último "zerar histórico", e mostra quantas faltam para 200. Também mostra o acerto com a faixa provável e a linha do empate. O veredito pode ser *Juntando amostra*, *Ainda no empate*, *Vantagem comprovada* ou *Abaixo do empate*.
+   - **Se a conexão com a IQ cair**, aparece um aviso amarelo, e o bot reconecta sozinho, sem você fazer nada (em geral, em menos de 1 min). Nesse meio-tempo, nenhuma ordem sai. Depois que volta, o status mostra "reconectou N×". Uma ordem aberta na hora da queda pode ficar como *sem resultado*: confira no histórico da IQ.
+   - **Em último caso, o servidor reinicia sozinho** e retoma o bot, sem zerar o placar: o stop win, o stop loss e o limite de entradas continuam contando. Só na conta demo (veja a seção 6).
 6. **Entradas:** a lista de todas as entradas por período (Hoje, 7 dias, Mês, Geral).
 7. **Desempenho:** acerto com faixa de confiança, resultado por dia e por hora, e saldo acumulado.
 8. **Barra da esquerda:** **Tela cheia**, **Tema claro/escuro**, a seta **‹** para encolher o menu e o seletor **Demo / Real** com o saldo.
 9. Para encerrar, use **Desligar BotBene**. Só fechar a janela **não** para o bot: ele continua rodando em segundo plano, e o atalho reabre o painel.
 10. Para zerar a contagem e recomeçar, use **Configuração → Dados → Zerar histórico do bot**, com o bot parado. Antes de apagar, ele guarda uma cópia em `data/backups/`.
 
-> Deixe o computador **ligado e sem suspender** enquanto o bot roda (Configurações → Sistema → Energia). Se o Windows dormir, o bot para de receber preços.
+> Deixe o computador **ligado e sem suspender** enquanto o bot roda (Configurações → Sistema → Energia). Se o Windows dormir, o bot para de receber preços. Quando o computador acordar, ele reconecta sozinho, mas perde as entradas do tempo em que ficou dormindo.
 
 ## 6. Conta real
 
@@ -181,6 +192,7 @@ O bot sempre começa na **demo**. Para usar a conta real:
 2. Na barra da esquerda, clique em **Real** e digite **REAL** para confirmar.
 3. É obrigatório ter um **stop loss** configurado.
 4. Com a conta real ativa, a tela fica marcada em **vermelho**.
+5. Se o servidor precisar reiniciar sozinho, na conta real o bot **não volta a operar sozinho**: ele fica parado, com um aviso, até você conferir a tela e clicar em **Iniciar bot**.
 
 A recomendação, pelos números da pesquisa, é só pensar nisso depois de pelo menos 200 entradas ao vivo com acerto acima do empate, mesmo no pior caso da faixa de confiança. Na prática, isso é cerca de 61% em 200 entradas, ou 59% em 500.
 
@@ -201,6 +213,7 @@ A recomendação, pelos números da pesquisa, é só pensar nisso depois de pelo
 - No fechamento de cada vela de 1 minuto, a estratégia procura uma **vela de comando**. Se achar, arma um pedido para a vela seguinte.
 - Durante a vela seguinte, o bot acompanha o preço ao vivo. Se o preço recuar até o gatilho nos primeiros 15 s, a ordem sai na hora, com vencimento no fim daquela vela.
 - O vencimento é calculado pelo **horário da IQ**, não pelo relógio do computador.
+- **Vigia da conexão:** o bot reconecta sozinho quando a IQ para de responder, quando o horário dela para de chegar (ele chega a cada segundo), quando o websocket fecha ou quando nenhum par aberto recebe preço novo. Se nem isso resolver, o servidor reinicia sozinho (`desktop/start_server.sh` sobe de novo) e retoma o bot.
 - A cada 6 horas, o servidor guarda as velas de 1 min e de 5 s dos pares configurados em `data/research.sqlite`. A IQ apaga as de 5 s depois de cerca de uma semana, e essa base é usada para testar ideias novas.
 
 ## 8. Tecnologias (stack)
@@ -259,7 +272,9 @@ Seus dados e sua configuração continuam. Se o ícone mudar numa versão nova, 
 | A ordem sai com o vencimento errado | O bot usa o horário da IQ. Mesmo assim, sincronize o relógio do Windows |
 | A porta 8000 está ocupada | Já existe um servidor rodando. Clique em **Desligar BotBene**, ou rode `pkill -INT -f uvicorn.app.main` no Ubuntu e abra de novo |
 | O painel não mostra a versão nova | Ele recarrega sozinho quando os arquivos mudam. Se não recarregar, aperte `Ctrl+F5` |
-| O bot parou de receber preço | A biblioteca da IQ às vezes trava. Clique em **Parar bot** e depois em **Iniciar bot**. Se não voltar, desligue e abra de novo |
+| Aviso amarelo "A conexão com a IQ Option caiu" | É normal de vez em quando: a IQ derruba a conexão. O bot reconecta sozinho, tentando de novo com esperas cada vez maiores (até 5 min). Se ficar muito tempo nisso, confira a internet e o login da IQ, e veja `data/server.log` |
+| "A IQ recusou o e-mail ou a senha" | Confira o login em **Configuração** e clique em **Testar conexão**. O bot não fica repetindo a senha errada por conta própria, porque isso pode bloquear a conta |
+| O bot parou de receber preço e não apareceu aviso | Clique em **Parar bot** e depois em **Iniciar bot**. Se não voltar, desligue e abra de novo |
 | O ícone do atalho ou da barra de tarefas continua o antigo | Rode de novo o comando do passo 7. Ele grava o ícone com um nome novo, o que obriga o Windows a largar o antigo. Depois, feche a janela do BotBene e abra pelo atalho |
 
 ## 12. Para quem vai mexer no código
@@ -268,7 +283,7 @@ Seus dados e sua configuração continuam. Se o ícone mudar numa versão nova, 
 cd ~/botbene/backend
 
 # rodar o servidor à mão (Ctrl+C para parar) e abrir http://127.0.0.1:8000
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 5
 
 # testes
 .venv/bin/python -m pytest -q

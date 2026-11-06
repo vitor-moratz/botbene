@@ -222,6 +222,15 @@ class Database:
             s.flush()
             return row.to_dict()
 
+    def close_orphan_orders(self) -> int:
+        """Ao subir o servidor: ordens que ficaram abertas não têm mais quem acompanhe o resultado."""
+        with self.Session.begin() as s:
+            done = s.execute(
+                update(OrderRow).where(OrderRow.status.in_(("enviando", "aberta"))).values(
+                    status="sem_resultado", error="O servidor reiniciou antes do resultado; confira no histórico da corretora")
+            )
+            return done.rowcount
+
     def update_order(self, order_id: int, **fields) -> dict | None:
         with self.Session.begin() as s:
             row = s.get(OrderRow, order_id)
@@ -232,9 +241,11 @@ class Database:
             s.flush()
             return row.to_dict()
 
-    def list_orders(self, *, limit: int = 200, since_ts: int | None = None) -> list[dict]:
+    def list_orders(self, *, limit: int = 200, since_ts: int | None = None, asset: str | None = None) -> list[dict]:
         with self.Session() as s:
             q = select(OrderRow)
+            if asset:
+                q = q.where(OrderRow.asset == asset)
             if since_ts is not None:
                 q = q.where(OrderRow.requested_at >= since_ts)
             q = q.order_by(OrderRow.requested_at.desc(), OrderRow.id.desc()).limit(limit)

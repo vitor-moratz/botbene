@@ -7,9 +7,12 @@ Avisos:
 - Instalação (no venv do backend):
     pip install websocket-client==0.56
     pip install -U https://github.com/iqoptionapi/iqoptionapi/archive/refs/heads/master.zip
-- A biblioteca espera respostas da IQ em laços SEM prazo e captura até o Ctrl+C. Por isso
-  toda chamada a ela passa por `_call()`, que roda numa thread com prazo máximo e vira
-  BrokerError se a IQ não responder a tempo.
+- A biblioteca espera respostas da IQ em laços SEM prazo e SEM pausa (`while x == None: pass`),
+  e captura até o Ctrl+C. Por isso toda chamada a ela passa por `_call()`, que roda numa thread
+  com prazo máximo, vira BrokerError se a IQ não responder a tempo e encerra a thread presa
+  (senão ela gastaria CPU para sempre e, somando várias, travaria o processo inteiro).
+- A biblioteca guarda a sessão numa variável global e tenta reaproveitá-la no próximo login. Com a
+  sessão vencida, a IQ fecha a conexão e o login fica esperando para sempre: `connect()` limpa antes.
 - `get_candles` tem atraso de ~30 s para a vela atual; ao vivo, use o stream.
 - Ordens: binária turbo de 1 min (`buy`), com vencimento no fim do minuto atual se faltarem
   mais de 30 s. REAL continua bloqueada sem IQ_ALLOW_REAL=true.
@@ -17,6 +20,7 @@ Avisos:
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import threading
 import time
@@ -31,6 +35,9 @@ log = logging.getLogger(__name__)
 
 MAX_CANDLES_PER_REQUEST = 1000
 INSTRUMENTS_TTL = 600  # segundos até recarregar a lista de binárias (horários e payouts mudam)
+CLOCK_FROZEN_SECONDS = 60  # o horário da IQ chega pelo websocket: parado por isso = conexão morta
+MAX_STUCK_CALLS = 6  # chamadas que nem à força encerraram (presas em rede): daqui em diante a conexão é dada como travada
+REAP_SECONDS = 0.5
 T = TypeVar("T")
 
 
@@ -55,10 +62,54 @@ def _to_candle(raw: dict[str, Any]) -> Candle:
     )
 
 
+class _Abandoned(SystemExit):
+    """Levantada dentro da thread de uma chamada que estourou o prazo (SystemExit: sai sem traceback no log)."""
+
+
+_abandoned: list[threading.Thread] = []
+_abandoned_lock = threading.Lock()
+_reaper_started = False
+
+
+def _inject(thread: threading.Thread) -> None:
+    if thread.ident is not None:
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_ulong(thread.ident), ctypes.py_object(_Abandoned))
+
+
+def _reap_loop() -> None:
+    # Repete porque a biblioteca tem `except:` soltos que engolem a exceção. Os laços dela têm saída
+    # por aqui; o que não sai é quem está preso numa chamada de rede (não gasta CPU e sai quando ela volta).
+    while True:
+        time.sleep(REAP_SECONDS)
+        with _abandoned_lock:
+            _abandoned[:] = [t for t in _abandoned if t.is_alive()]
+            alive = list(_abandoned)
+        for thread in alive:
+            _inject(thread)
+
+
+def _abandon(worker: threading.Thread) -> None:
+    """Encerra à força a thread de uma chamada sem resposta."""
+    global _reaper_started
+    with _abandoned_lock:
+        _abandoned.append(worker)
+        if not _reaper_started:
+            _reaper_started = True
+            threading.Thread(target=_reap_loop, name="iq-encerra-presas", daemon=True).start()
+    _inject(worker)
+
+
+def stuck_calls() -> int:
+    """Quantas chamadas estouraram o prazo e continuam vivas."""
+    with _abandoned_lock:
+        _abandoned[:] = [t for t in _abandoned if t.is_alive()]
+        return len(_abandoned)
+
+
 def call_with_deadline(label: str, fn: Callable[[], T], timeout: float) -> T:
     """Roda `fn` numa thread e espera no máximo `timeout` segundos.
 
-    Se estourar o prazo, levanta BrokerError (a thread presa morre junto com o processo).
+    Se estourar o prazo, encerra a thread e levanta BrokerError.
     O Ctrl+C continua funcionando porque quem espera é a thread principal.
     """
     box: dict[str, Any] = {}
@@ -73,6 +124,7 @@ def call_with_deadline(label: str, fn: Callable[[], T], timeout: float) -> T:
     worker.start()
     worker.join(timeout)
     if worker.is_alive():
+        _abandon(worker)
         raise BrokerError(f"A IQ Option não respondeu a '{label}' em {timeout:.0f}s")
     if "error" in box:
         raise box["error"]
@@ -106,29 +158,51 @@ class IQOptionBroker(Broker):
         self._instruments: dict[str, dict] = {}
         self._instruments_at = 0.0
         self._skew_warned = False
+        self._skew: float | None = None  # relógio local - horário da IQ, medido ao conectar
 
     def _call(self, label: str, fn: Callable[[], T], timeout: float | None = None) -> T:
-        return call_with_deadline(label, fn, self._timeout if timeout is None else timeout)
+        """Toda falha da biblioteca vira BrokerError: o bot trata como problema de conexão (e reconecta)."""
+        if self._api is None:
+            raise BrokerError(f"Sem conexão com a IQ Option ({label})")
+        stuck = stuck_calls()
+        if stuck >= MAX_STUCK_CALLS:  # não abre mais threads em cima de uma conexão travada
+            raise BrokerError(f"A IQ Option não respondeu a {stuck} chamadas que seguem presas")
+        try:
+            return call_with_deadline(label, fn, self._timeout if timeout is None else timeout)
+        except BrokerError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - KeyError, websocket etc. de dentro da biblioteca
+            raise BrokerError(f"Erro da IQ Option em '{label}': {exc}") from exc
 
     # ------------------------------------------------------------------ conexão
 
     def connect(self) -> None:
         try:
+            from iqoptionapi import global_value
             from iqoptionapi.stable_api import IQ_Option
         except ImportError as exc:  # pragma: no cover - depende de instalação manual
             raise BrokerError(
                 "Biblioteca iqoptionapi não instalada. Veja as instruções no topo de app/broker/iqoption.py"
             ) from exc
+        global_value.SSID = None  # sem isso, um login depois de uma queda reaproveita a sessão vencida e trava
         self._api = IQ_Option(self._email, self._password)
-        ok, reason = self._call("login", self._api.connect, timeout=45)
-        if not ok and reason == "2FA":
-            if self._sms_code_provider is None:
-                raise BrokerError("A conta pede código SMS (2FA). Rode a ferramenta em modo interativo.")
-            code = self._sms_code_provider()  # input() fica na thread principal
-            ok, reason = self._call("login 2FA", lambda: self._api.connect_2fa(code), timeout=45)
-        if not ok:
-            raise BrokerError(f"Falha no login da IQ Option: {reason}")
-        self.set_account(self._account)
+        self._skew = None
+        try:
+            ok, reason = self._call("login", self._api.connect, timeout=45)
+            if not ok and reason == "2FA":
+                if self._sms_code_provider is None:
+                    raise BrokerError("A conta pede código SMS (2FA). Rode a ferramenta em modo interativo.")
+                code = self._sms_code_provider()  # input() fica na thread principal
+                ok, reason = self._call("login 2FA", lambda: self._api.connect_2fa(code), timeout=45)
+            if not ok:
+                if "invalid_credentials" in str(reason):  # o código fica na mensagem: o bot usa para não ficar tentando
+                    raise BrokerError("A IQ recusou o e-mail ou a senha (invalid_credentials)")
+                raise BrokerError(f"Falha no login da IQ Option: {reason}")
+            self.set_account(self._account)
+        except BrokerError:
+            self.disconnect()  # não deixa meia conexão aberta para trás
+            raise
+        self._skew = time.time() - self.server_time()
         self._load_instruments()
         self._start_refresher()
         log.info("Conectado à IQ Option (conta %s, %d instrumentos de binária)", self._account.value, len(self._instruments))
@@ -140,14 +214,15 @@ class IQOptionBroker(Broker):
         def loop() -> None:
             while self._api is api:
                 time.sleep(INSTRUMENTS_TTL)
-                if self._api is api:
+                # Só com a conexão viva: sem ela, a biblioteca tentaria reconectar por conta própria.
+                if self._api is api and self.is_connected():
                     self._load_instruments()
 
         threading.Thread(target=loop, name="iq-instrumentos", daemon=True).start()
 
     def currency(self) -> str:
         try:
-            return str(self._call("moeda", self._api.get_currency, timeout=10) or "USD")
+            return str(self._call("moeda", lambda: self._api.get_currency(), timeout=10) or "USD")
         except BrokerError:
             return "USD"
 
@@ -159,7 +234,7 @@ class IQOptionBroker(Broker):
         from iqoptionapi import constants as op_code
 
         try:
-            init = self._call("instrumentos", self._api.get_all_init_v2, timeout=30)
+            init = self._call("instrumentos", lambda: self._api.get_all_init_v2(), timeout=30)
         except BrokerError as exc:
             log.warning("Lista de instrumentos indisponível: %s", exc)
             return
@@ -194,6 +269,11 @@ class IQOptionBroker(Broker):
             return False, f"{asset} está fechado para binária agora"
         return True, "ok"
 
+    def payout_now(self, asset: str) -> float | None:
+        """Da lista de instrumentos em memória (recarregada a cada 10 min em segundo plano)."""
+        info = self._instrument(asset)
+        return info["payout"] if info and info["kind"] == "turbo" else None
+
     def disconnect(self) -> None:
         if self._api is None:
             return
@@ -204,7 +284,18 @@ class IQOptionBroker(Broker):
         self._api = None
 
     def is_connected(self) -> bool:
-        return self._api is not None and bool(self._call("checar conexão", self._api.check_connect, timeout=5))
+        """Olha ESTA conexão, sem esperar por nada: o websocket dela está de pé e o horário da IQ continua
+        chegando? (O `check_connect` da biblioteca é uma bandeira global e demora a perceber uma conexão morta.)"""
+        api = self._api
+        if api is None:
+            return False
+        try:
+            if not api.api.websocket_alive():
+                return False
+            behind = time.time() - api.get_server_timestamp()
+        except Exception:  # noqa: BLE001 - conexão pela metade
+            return False
+        return self._skew is None or behind - self._skew <= CLOCK_FROZEN_SECONDS
 
     def ensure_connected(self, attempts: int = 3) -> None:
         for attempt in range(1, attempts + 1):
@@ -232,13 +323,13 @@ class IQOptionBroker(Broker):
         return self._account
 
     def balance(self) -> float:
-        value = self._call("saldo", self._api.get_balance)
+        value = self._call("saldo", lambda: self._api.get_balance(), timeout=10)
         if value is None:
             raise BrokerError("Não foi possível ler o saldo")
         return float(value)
 
     def server_time(self) -> float:
-        return float(self._call("horário do servidor", self._api.get_server_timestamp, timeout=5))
+        return float(self._call("horário do servidor", lambda: self._api.get_server_timestamp(), timeout=5))
 
     # ------------------------------------------------------------------ velas
 
@@ -252,6 +343,17 @@ class IQOptionBroker(Broker):
         if asset not in op_code.ACTIVES:
             raise BrokerError(f"Ativo {asset!r} não existe na IQ Option (pares de binária terminam em -op, ex.: EURUSD-op)")
 
+    def _request_candles(self, asset: str, timeframe: int, count: int, end: float) -> list[dict]:
+        """O mesmo pedido do `get_candles` da biblioteca, sem o laço sem pausa e sem ela reconectar por conta própria."""
+        from iqoptionapi import constants as op_code
+
+        api = self._api.api
+        api.candles.candles_data = None
+        api.getcandles(op_code.ACTIVES[asset], timeframe, count, end)
+        while api.candles.candles_data is None:
+            time.sleep(0.02)
+        return api.candles.candles_data
+
     def _get_candles(self, asset: str, timeframe: int, count: int, end_ts: float | None) -> list[Candle]:
         self._require_known(asset)
         end = end_ts if end_ts is not None else self.server_time()
@@ -260,9 +362,7 @@ class IQOptionBroker(Broker):
         while remaining > 0:
             batch = min(remaining, MAX_CANDLES_PER_REQUEST)
             batch_end = end
-            raw = self._call(f"histórico {asset}", lambda: self._api.get_candles(asset, timeframe, batch, batch_end))
-            if raw is None:
-                raise BrokerError(f"Ativo {asset!r} não encontrado na IQ Option")
+            raw = self._call(f"histórico {asset}", lambda: self._request_candles(asset, timeframe, batch, batch_end))
             if not raw:
                 break
             for item in raw:
@@ -323,6 +423,8 @@ class IQOptionBroker(Broker):
 
     def order_result(self, ticket: OrderTicket) -> OrderResult | None:
         """Lê os avisos que a IQ manda sozinha quando a opção fecha (nada aqui espera resposta)."""
+        if self._api is None:
+            raise BrokerError("Conexão encerrada: o resultado não chega mais por ela")
         api = self._api.api
         msg = (getattr(api, "socket_option_closed", {}) or {}).get(ticket.order_id)
         if msg is not None:
@@ -340,14 +442,14 @@ class IQOptionBroker(Broker):
 
     def open_assets(self, option_type: str = "turbo") -> dict[str, bool]:
         # Chamada pesada (a própria biblioteca avisa); use com moderação.
-        data = self._call("ativos abertos", self._api.get_all_open_time, timeout=60)
+        data = self._call("ativos abertos", lambda: self._api.get_all_open_time(), timeout=60)
         return {asset: bool(info.get("open")) for asset, info in data.get(option_type, {}).items()}
 
     def payouts(self, option_type: str = "turbo") -> dict[str, float]:
         if self._instruments:
             return {name: info["payout"] for name, info in self._instruments.items()
                     if info["kind"] == option_type and info["payout"] is not None}
-        data = self._call("payouts", self._api.get_all_profit, timeout=30)
+        data = self._call("payouts", lambda: self._api.get_all_profit(), timeout=30)
         out: dict[str, float] = {}
         for asset, info in data.items():
             value = info.get(option_type) if isinstance(info, dict) else None

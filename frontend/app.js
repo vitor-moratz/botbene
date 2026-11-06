@@ -3,15 +3,20 @@
   'use strict';
 
   // Ordem fixa: a cor segue o script, nunca a posição na lista.
-  var STRATEGY_ORDER = ['ldp_v13', 'ldp_v13_linhas', 'wiki_pro_v21', 'ldp_apostila', 'retracao_comando'];
+  var STRATEGY_ORDER = ['ldp_v13', 'ldp_v13_linhas', 'wiki_pro_v21', 'ldp_apostila', 'retracao_comando',
+    'retracao_lote', 'reversao_forca', 'reversao_indecisao'];
   var LABELS = {
     ldp_v13: 'LDP v1.3', ldp_v13_linhas: 'LDP v1.3 + regra das linhas', wiki_pro_v21: 'WIKI PRO V2.1',
-    ldp_apostila: 'Apostila · marcações', retracao_comando: 'Apostila · retração no comando'
+    ldp_apostila: 'Apostila · marcações', retracao_comando: 'Apostila · retração no comando',
+    retracao_lote: 'Estudo · retração no lote', reversao_forca: 'Estudo · reversão A (força trava)',
+    reversao_indecisao: 'Estudo · reversão B (força rompe indecisão)'
   };
   var TRIGGER_LABELS = { retracao: 'Retração', reversao: 'Reversão', throwback: 'Throwback', comando: 'Retração no comando' };
   var CONF_LABELS = {
     gatilho: 'gatilho', forca: 'marcação forte', contexto: 'nova alta/baixa + nova posição',
-    espaco: 'espaço até a barreira', tendencia: 'tendência EMA'
+    espaco: 'espaço até a barreira', tendencia: 'tendência EMA',
+    marcacao: 'comando ou taxa dividida', indecisao: 'dupla/tripla posição',
+    registro: 'primeiro registro + nova posição', juntas: 'marcações juntas'
   };
   var CLASS_LABELS = {
     comando_n1: 'Comando nível 1 (careca)', comando_unico: 'Comando único (nível 2)',
@@ -35,8 +40,13 @@
   };
   var STATUS_INFO = {
     parado: { icon: '■', text: 'Parado' }, conectando: { icon: '●', text: 'Conectando…' },
-    rodando: { icon: '●', text: 'Rodando' }, erro: { icon: '✗', text: 'Erro' }
+    rodando: { icon: '●', text: 'Rodando' }, reconectando: { icon: '↻', text: 'Reconectando…' },
+    erro: { icon: '✗', text: 'Erro' }
   };
+  // Bot ligado (mesmo que conectando ou reconectando sozinho): o botão vira "Parar bot".
+  function isBusy(s) {
+    return !!s && (s.status === 'rodando' || s.status === 'conectando' || s.status === 'reconectando');
+  }
   var PAGE_TITLES = { painel: 'Painel', entradas: 'Entradas', desempenho: 'Desempenho', config: 'Configuração' };
   var PAGES = ['painel', 'entradas', 'desempenho', 'config'];
   var TF_TEXT = { 60: '1 minuto', 120: '2 minutos', 300: '5 minutos' };
@@ -46,7 +56,7 @@
   };
   var REAL_WARNING = 'CONTA REAL: as ordens passam a usar DINHEIRO DE VERDADE.\n\n' +
     'A retração no comando ainda não tem vantagem comprovada: em dados que ela nunca viu ficou em ~54%, ' +
-    'igual ao empate (54,3%). A recomendação é continuar na demo até ~200 entradas ao vivo.\n\n' +
+    'igual ao empate. A recomendação é continuar na demo até ~200 entradas ao vivo.\n\n' +
     'Para usar a conta real mesmo assim, digite REAL:';
   // Na IQ, a binária dos pares normais é o instrumento com sufixo "-op".
   var DEFAULT_PAIRS = ['EURUSD-op', 'GBPUSD-op', 'USDJPY-op', 'AUDUSD-op', 'EURJPY-op', 'EURGBP-op', 'AUDJPY-op', 'NZDUSD-op'];
@@ -55,12 +65,13 @@
     aguardando: { cls: 'warn', icon: '●', text: 'Aguardando sua decisão' },
     aprovado: { cls: 'ok', icon: '✓', text: 'Aprovado: a ordem sai quando o gatilho disparar' },
     disparou: { cls: 'warn', icon: '▲', text: 'O gatilho disparou! Aprovar agora entra no preço do momento' },
-    'ordem enviada': { cls: 'ok', icon: '✓', text: 'Ordem enviada na conta demo' },
+    'ordem enviada': { cls: 'ok', icon: '✓', text: 'Ordem enviada' },
     rejeitado: { cls: '', icon: '—', text: 'Rejeitado: sem ordem' },
-    'não disparou': { cls: '', icon: '—', text: 'O recuo não veio nos 15 s: sem ordem (é o normal, ~92% dos pedidos terminam assim)' },
+    'não disparou': { cls: '', icon: '—', text: 'O preço não chegou ao gatilho a tempo: sem ordem (é o normal, a maioria dos pedidos termina assim)' },
     'expirou sem resposta': { cls: 'bad', icon: '✗', text: 'A janela fechou sem resposta: sem ordem' },
     bloqueada: { cls: 'bad', icon: '✗', text: 'Bloqueada pela gestão de risco' },
-    'exemplo concluído': { cls: 'ok', icon: '✓', text: 'Exemplo: aprovado e o preço tocou o gatilho. Num pedido de verdade, a ordem iria agora para a conta demo; aqui nada foi enviado' }
+    'cancelado: conexão caiu': { cls: 'bad', icon: '↻', text: 'A conexão com a IQ caiu: sem ordem (o bot reconecta sozinho)' },
+    'exemplo concluído': { cls: 'ok', icon: '✓', text: 'Exemplo: aprovado e o preço tocou o gatilho. Num pedido de verdade, a ordem iria agora para a corretora; aqui nada foi enviado' }
   };
   var ORDER_INFO = {
     enviando: { icon: '…', text: 'Enviando' }, aberta: { icon: '…', text: 'Aberta' },
@@ -165,24 +176,34 @@
     page: 'painel', status: null, chartData: null, chartKey: null, priceLines: [], armedLines: [], markersByTime: {},
     visible: {}, showBacktest: false, ePeriod: 'hoje', dPeriod: 'mes', connected: false, shuttingDown: false,
     config: null, cfgPairs: [], forming: {}, seenOpen: {}, beeped: {}, doneAt: {}, audio: null,
-    showComparison: false, uiVersion: null, ordersById: {}, resolvedAt: {}, apInit: false
+    uiVersion: null, ordersById: {}, resolvedAt: {}, apInit: false, entryLines: [], entriesByTime: {}, scriptMarksByTime: {},
+    showReading: false, readingData: null, readingByTime: {}
   };
-  try { state.showComparison = localStorage.getItem('botbene-comparacao') === '1'; } catch (e) { /* sem armazenamento */ }
-  // Estratégias principais = as que pedem aprovação na Configuração; o resto é comparação.
-  function mainStrategies() {
-    var list = state.config && state.config.order_strategies && state.config.order_strategies.length
-      ? state.config.order_strategies : ['retracao_comando'];
-    return list.slice();
+  try { state.showReading = localStorage.getItem('botbene-leitura') === '1'; } catch (e) { /* sem armazenamento */ }
+  // Cada estratégia está desligada (off), observando (observe: anota sem ordem) ou operando (operate).
+  function strategyState(name) {
+    return (state.config && state.config.strategies && state.config.strategies[name]) || 'off';
   }
-  function isMain(name) { return mainStrategies().indexOf(name) >= 0; }
+  function strategiesIn(states) {
+    return STRATEGY_ORDER.filter(function (n) { return states.indexOf(strategyState(n)) >= 0; });
+  }
+  // Os números do Painel contam quem opera; sem ninguém operando, quem observa.
+  function mainStrategies() {
+    var operating = strategiesIn(['operate']);
+    return operating.length ? operating : strategiesIn(['observe']);
+  }
   function scopeQuery() {
-    var all = state.showComparison && comparisonOn();
-    return all ? '' : '&strategy=' + encodeURIComponent(mainStrategies().join(','));
+    var main = mainStrategies();
+    return '&strategy=' + encodeURIComponent(main.length ? main.join(',') : 'nenhuma');
   }
   function syncVisible() {
-    STRATEGY_ORDER.forEach(function (n) { state.visible[n] = state.showComparison || isMain(n); });
+    STRATEGY_ORDER.forEach(function (n) { state.visible[n] = strategyState(n) !== 'off'; });
   }
-  syncVisible();
+  // Scripts são só desenho no gráfico, ligados na Configuração.
+  function scriptOn(name) {
+    var scripts = state.config && state.config.chart_scripts;
+    return scripts ? !!scripts[name] : name !== 'wiki_pro';
+  }
   var tipData = new WeakMap();
 
   // ------------------------------------------------------------------ tema
@@ -208,9 +229,26 @@
   }
   function candleColors() {
     var up = cssVar('--candle-up'), down = cssVar('--candle-down');
-    // Alta vazada, baixa preenchida: a direção não depende só da cor.
-    return { upColor: 'rgba(0,0,0,0)', downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down };
+    return { upColor: up, downColor: down, borderUpColor: up, borderDownColor: down, wickUpColor: up, wickDownColor: down };
   }
+  // Linhas de 50% e setas CALL/PUT do script LDP v1.3, nas cores dele. Só desenho: o bot não opera nelas.
+  function ldpLineOptions(colorVar) {
+    return { color: cssVar(colorVar), lineWidth: 2, lineType: LWC.LineType.WithSteps, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+  }
+  function scriptMarker(m) {
+    var call = m.direction === 'call';
+    return { time: m.time, position: call ? 'belowBar' : 'aboveBar', color: cssVar(call ? '--line-buy' : '--line-sell'),
+      shape: call ? 'arrowUp' : 'arrowDown', text: call ? 'CALL' : 'PUT' };
+  }
+  // Ordem que foi para a corretora: a marca maior do gráfico, na cor do texto para não parecer script nem estratégia.
+  function entryMarker(o) {
+    var call = o.direction === 'call';
+    var icon = (RESULT_INFO[o.status] || ORDER_INFO[o.status] || { icon: '' }).icon;
+    return { time: o.time, position: call ? 'belowBar' : 'aboveBar', color: cssVar('--text-primary'), size: 2,
+      shape: call ? 'arrowUp' : 'arrowDown',
+      text: 'ENTRADA ' + (call ? 'CALL' : 'PUT') + (o.price != null ? ' ' + fmtPrice(o.price) : '') + (icon ? ' ' + icon : '') };
+  }
+  function byTime(a, b) { return a.time - b.time; }
   function tickFormatter(t, type) {
     // type >= 3: marcação de hora; abaixo disso: dia/mês/ano.
     return type >= 3 ? fmtTime(t) : dayFmt.format(new Date(t * 1000));
@@ -225,6 +263,48 @@
     c.applyOptions(themeOptions());
     return c;
   }
+
+  // Botões do gráfico, como na IQ Option: − e + (zoom, mantendo a vela da direita no lugar) e foco no preço atual.
+  var ZOOM_STEP = 1.4, ZOOM_MIN_BARS = 12, FOCUS_MARGIN_BARS = 8;  // folga à direita: a marca de ENTRADA da vela atual cabe inteira
+  function chartZoom(chart, series, factor) {
+    var ts = chart.timeScale(), r = ts.getVisibleLogicalRange();
+    if (!r) return;
+    var maxBars = Math.max(ZOOM_MIN_BARS, series.data().length + FOCUS_MARGIN_BARS);
+    var width = Math.max(ZOOM_MIN_BARS, Math.min(maxBars, (r.to - r.from) * factor));
+    ts.setVisibleLogicalRange({ from: r.to - width, to: r.to });
+  }
+  function chartFocus(chart, series) {
+    var ts = chart.timeScale(), r = ts.getVisibleLogicalRange(), last = series.data().length - 1;
+    if (!r || last < 0) return;
+    var width = r.to - r.from;  // mantém o zoom; só traz a vela atual de volta
+    ts.setVisibleLogicalRange({ from: last + FOCUS_MARGIN_BARS - width, to: last + FOCUS_MARGIN_BARS });
+    chart.priceScale('right').applyOptions({ autoScale: true });  // desfaz o arrasto na escala de preço
+  }
+  function addChartNav(box, chart, series) {
+    var nav = document.createElement('div');
+    nav.className = 'chart-nav';
+    nav.setAttribute('role', 'group');
+    nav.setAttribute('aria-label', 'Zoom e posição do gráfico');
+    nav.innerHTML =
+      '<button type="button" data-nav="out" title="Afastar (ver mais velas)" aria-label="Afastar o gráfico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>' +
+      '<button type="button" data-nav="in" title="Aproximar (ver menos velas)" aria-label="Aproximar o gráfico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M12 5v14"/></svg></button>' +
+      '<button type="button" data-nav="focus" title="Voltar para o preço atual" aria-label="Voltar para o preço atual"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="1.2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>';
+    box.appendChild(nav);
+    nav.addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.nav === 'in') chartZoom(chart, series, 1 / ZOOM_STEP);
+      else if (b.dataset.nav === 'out') chartZoom(chart, series, ZOOM_STEP);
+      else chartFocus(chart, series);
+    });
+    // O botão de foco acende quando a vela atual saiu da tela.
+    var focus = nav.querySelector('[data-nav="focus"]');
+    chart.timeScale().subscribeVisibleLogicalRangeChange(function (r) {
+      var last = series.data().length - 1;
+      focus.classList.toggle('away', !!r && last >= 0 && r.to < last);
+    });
+  }
+
   function initCharts() {
     if (!LWC) {
       $('#chart').innerHTML = '<p class="empty-state">Não foi possível carregar a biblioteca do gráfico (precisa de internet).</p>';
@@ -232,10 +312,11 @@
     }
     mainChart = makeChart($('#chart'));
     candleSeries = mainChart.addCandlestickSeries(candleColors());
-    var lineOpts = { lineWidth: 1, lineType: LWC.LineType.WithSteps, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
-    buySeries = mainChart.addLineSeries(Object.assign({ color: cssVar('--line-buy') }, lineOpts));
-    sellSeries = mainChart.addLineSeries(Object.assign({ color: cssVar('--line-sell') }, lineOpts));
+    buySeries = mainChart.addLineSeries(ldpLineOptions('--line-buy'));
+    sellSeries = mainChart.addLineSeries(ldpLineOptions('--line-sell'));
+    candleSeries.attachPrimitive(readingPrimitive);
     mainChart.subscribeCrosshairMove(onCrosshair);
+    addChartNav($('#chart-box'), mainChart, candleSeries);
 
     eqChart = makeChart($('#d-equity'));
     eqSeries = eqChart.addAreaSeries({ lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
@@ -251,7 +332,12 @@
     buySeries.applyOptions({ color: cssVar('--line-buy') });
     sellSeries.applyOptions({ color: cssVar('--line-sell') });
     eqChart.applyOptions(themeOptions());
-    if (state.abChart) { state.abChart.applyOptions(themeOptions()); state.abSeries.applyOptions(candleColors()); }
+    if (state.abChart) {
+      state.abChart.applyOptions(themeOptions());
+      state.abSeries.applyOptions(candleColors());
+      state.abBuy.applyOptions({ color: cssVar('--line-buy') });
+      state.abSell.applyOptions({ color: cssVar('--line-sell') });
+    }
     if (state.chartData) renderChart(state.chartData);
     if (state.page === 'desempenho') refreshDesempenho();
   }
@@ -269,7 +355,7 @@
     if (s.chosen_account && s.chosen_account !== state.chosenAccount) { state.chosenAccount = s.chosen_account; renderAccount(state.accountInfo); }
     $('#mode-text').textContent = MODE_TEXT[s.mode] || 'Modo: só sinais (sem ordens)';
 
-    var busy = s.status === 'rodando' || s.status === 'conectando';
+    var busy = isBusy(s);
     var btn = $('#btn-toggle');
     btn.textContent = busy ? 'Parar bot' : 'Iniciar bot';
     btn.classList.toggle('stop', busy);
@@ -277,6 +363,7 @@
     renderToolbarAssets();
 
     if (s.status === 'erro' && s.error) showBanner(s.error);
+    else if (s.status === 'reconectando') showBanner(reconnectText(s.connection || {}), 'warn');
     else if (state.connected) hideBanner();
 
     var price = s.forming ? s.forming.close : (s.last_candle ? s.last_candle.close : null);
@@ -290,7 +377,7 @@
 
   function renderToolbarAssets() {
     var s = state.status, cfg = state.config;
-    var busy = s && (s.status === 'rodando' || s.status === 'conectando');
+    var busy = isBusy(s);
     var assets = busy && s.assets && s.assets.length ? s.assets.map(function (a) { return a.asset; }) : (cfg ? cfg.assets : []);
     var tf = busy ? s.timeframe : (cfg ? cfg.timeframe : 60);
     $('#assets-text').textContent = assets.length ? assets.join(' · ') : '—';
@@ -313,6 +400,77 @@
   }
 
   // ------------------------------------------------------------------ próxima entrada (apostila)
+  function capitalize(text) { return text.charAt(0).toUpperCase() + text.slice(1); }
+
+  // Par fechado para binária não manda ordem: melhor avisar logo do que deixar parecer que o bot parou.
+  function openPairsNote(s) {
+    var assets = s.assets || [];
+    var closed = assets.filter(function (a) { return !a.tradable; });
+    if (!closed.length) return '';
+    if (closed.length === assets.length) {
+      return '<div class="pairs-note warn">' + (assets.length > 1 ? 'Nenhum par aberto' : 'Par fechado') + ' para binária agora: as entradas ficam só anotadas.</div>';
+    }
+    return '<div class="pairs-note"><strong>' + (assets.length - closed.length) + ' de ' + assets.length + '</strong> pares abertos para binária · fechados: ' +
+      esc(closed.map(function (a) { return a.asset; }).join(', ')) + '</div>';
+  }
+
+  // O bot registra uma linha por acontecimento. Na tela, cada setup aparece uma vez, com o desfecho.
+  function recentSetups(s) {
+    var groups = [], byKey = {};
+    function group(x) {
+      var key = [x.target_ts, x.asset, x.strategy, x.direction].join('|');
+      if (!byKey[key]) {
+        byKey[key] = { target_ts: x.target_ts, asset: x.asset, strategy: x.strategy, direction: x.direction, outcomes: [], approval: null };
+        groups.push(byKey[key]);
+      }
+      return byKey[key];
+    }
+    (s.armed_log || []).forEach(function (l) { group(l).outcomes.push(l.outcome); });
+    (s.approvals || []).forEach(function (a) { if (!a.demo) group(a).approval = a; });
+    return groups.filter(function (g) {  // ainda armado e sem novidade: já aparece no quadro acima
+      return g.outcomes.length || !g.approval || !isOpenApproval(g.approval);
+    }).sort(function (x, y) { return y.target_ts - x.target_ts; });
+  }
+  function noOrderReason(outcome, asset) {
+    var reason = outcome.replace(/^sem ordem:\s*/, '');
+    return capitalize(reason.indexOf(asset) === 0 ? 'par' + reason.slice(asset.length) : reason);
+  }
+  // pill vazio = desfecho comum (não disparou): a linha fica discreta, e o que importa se destaca.
+  function setupOutcome(g, s) {
+    function find(prefix) { return g.outcomes.filter(function (o) { return o.indexOf(prefix) === 0; })[0]; }
+    var a = g.approval;
+    if (a && isOpenApproval(a)) return { pill: 'none', text: 'Aguardando você' };
+    if (a) {
+      var oc = approvalOutcome(a);
+      if (oc.kind === 'sent') return { pill: 'sent', text: 'Ordem enviada', result: oc.result };
+      if (oc.kind === 'fail') return { pill: 'fail', text: 'Não enviada', note: capitalize(oc.reason.split(' · ').slice(1).join(' · ')) };
+      if (a.status === 'não disparou') return { text: 'não disparou' };
+      return { pill: 'none', text: 'Sem ordem', note: capitalize(a.status) };
+    }
+    var blocked = find('sem ordem:');
+    var reason = blocked ? noOrderReason(blocked, g.asset) : null;
+    if (find('ENTROU')) {
+      return { pill: 'note', text: 'Só anotada', note: reason ||
+        (s.mode === 'sinais' ? 'Modo só sinais' : strategyState(g.strategy) === 'observe' ? 'Estratégia em Observar' : '') };
+    }
+    var canceled = find('cancelado');
+    if (canceled) return { pill: 'none', text: 'Cancelada', note: capitalize(canceled.replace(/^cancelado:\s*/, '')) };
+    if (find('não ')) return { text: 'não disparou' };
+    return reason ? { pill: 'none', text: 'Sem ordem', note: reason } : { text: 'armada' };
+  }
+  function setupRow(g, s, multi) {
+    var oc = setupOutcome(g, s);
+    var side = oc.pill ? '<span class="oc-pill ' + oc.pill + '">' + esc(oc.text) + '</span>' : '<span class="setup-quiet">' + esc(oc.text) + '</span>';
+    if (oc.result) side += '<span class="oc-res ' + oc.result.cls + '">' + esc(shortResult(oc.result.text)) + '</span>';
+    return '<div class="setup-row' + (oc.pill ? '' : ' quiet') + '" title="' + esc(label(g.strategy)) + '">' +
+      '<span class="when">' + fmtTime(g.target_ts) + '</span>' +
+      '<span class="setup-what">' + (shownStrategies().length > 1 ? dotHtml(g.strategy) : '') + dirHtml(g.direction) +
+        (multi ? '<span class="oc-asset">' + esc(g.asset) + '</span>' : '') + '</span>' +
+      '<span class="oc-side">' + side + '</span>' +
+      (oc.note ? '<div class="setup-note">' + esc(oc.note) + '</div>' : '') +
+    '</div>';
+  }
+
   function renderArmed(s) {
     var el = $('#armed-body');
     var list = (s && s.armed) || [];
@@ -325,9 +483,12 @@
     var multi = (s.assets || []).length > 1;
     if (!list.length) {
       var reasons = s.plan_reasons || [];
-      html = '<p class="armed-none">Nenhuma entrada armada para esta vela' + (multi ? ' em nenhum par' : '') + '.</p>' +
-        (reasons.length ? (multi ? '<div class="muted small">Por que não armou no ' + esc(s.asset) + ':</div>' : '') +
-          '<ul class="reasons">' + reasons.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ul>' : '');
+      var oneStrategy = shownStrategies().length === 1;  // aí o nome dela na frente de cada motivo é repetição
+      html = '<p class="armed-none">Nenhuma entrada armada nesta vela.</p>' +
+        (reasons.length ? '<div class="armed-why">' + (multi ? '<strong>' + esc(s.asset) + '</strong>' : '') + reasons.map(function (r) {
+          var cut = r.indexOf(': ');
+          return '<div>' + esc(capitalize(oneStrategy && cut >= 0 ? r.slice(cut + 2) : r)) + '</div>';
+        }).join('') + '</div>' : '');
     } else {
       html = list.map(function (a) {
         var head = '<div class="armed" style="border-left-color:' + strategyColor(a.strategy) + '">' +
@@ -342,38 +503,26 @@
               ' se a vela das ' + fmtTime(a.target_ts) + ' recuar até o gatilho nos primeiros ' + a.window_seconds + ' s.</div>' +
           '</div>';
         }
-        var conf = Object.keys(CONF_LABELS).map(function (k) {
-          return '<span class="chip ' + (a.confluences[k] ? 'ok' : 'no') + '">' + CONF_LABELS[k] + '</span>';
+        var conf = Object.keys(a.confluences || {}).map(function (k) {
+          return '<span class="chip ' + (a.confluences[k] ? 'ok' : 'no') + '">' + esc(CONF_LABELS[k] || k) + '</span>';
         }).join('');
+        var study = STUDY_STRATEGIES.indexOf(a.strategy) >= 0;  // as do estudo já mandam o nome e a página de cada região
         return head +
-          '<div class="armed-level">Marcação <strong>' + fmtPrice(a.level_price) + '</strong> <span class="muted">· força ' + a.level_strength +
-            ' · ' + esc(a.level_sources.slice(0, 2).map(sourceLabel).join(' · ')) + '</span></div>' +
+          '<div class="armed-level">Marcação <strong>' + fmtPrice(a.level_price) + '</strong> <span class="muted">· ' +
+            (study ? '' : 'força ' + a.level_strength + ' · ') +
+            esc(a.level_sources.slice(0, study ? 3 : 2).map(study ? String : sourceLabel).join(' · ')) + '</span></div>' +
           '<div class="armed-conf">' + conf + '</div>' +
           '<div class="muted small">' + esc(LABELS[a.strategy] || '') + ': ' + a.score + ' confluências. Entra se o preço tocar a marcação nos primeiros ' +
             a.window_seconds + ' s da vela das ' + fmtTime(a.target_ts) + '.</div>' +
         '</div>';
       }).join('');
     }
-    // Com ordens ligadas: cada pedido com um selo claro (ordem enviada / sem ordem / não enviada).
-    var closed = (s.approvals || []).filter(function (a) { return !isOpenApproval(a) && !a.demo; }).slice().reverse();
-    var log = s.armed_log || [];
-    if (closed.length) {
-      html += '<div class="armed-log"><div class="muted">Últimos pedidos</div>' + closed.slice(0, 8).map(function (a) {
-        var oc = approvalOutcome(a);
-        var pill = oc.kind === 'sent' ? 'Enviada' : oc.kind === 'fail' ? 'Não enviada' : 'Sem ordem';
-        var res = oc.kind === 'sent' && oc.result ? '<span class="oc-res ' + oc.result.cls + '">' + esc(shortResult(oc.result.text)) + '</span>' : '';
-        return '<div class="row" title="' + esc(oc.title + ': ' + oc.reason) + '"><span class="when">' + fmtTime(a.target_ts) + '</span>' +
-          dirHtml(a.direction) + '<span class="oc-asset">' + esc(a.asset) + '</span>' +
-          '<span class="oc-side"><span class="oc-pill ' + oc.kind + '">' + pill + '</span>' + res + '</span></div>';
-      }).join('') + '<div class="muted small">Passe o mouse para ver o motivo.</div></div>';
-    } else if (log.length) {
-      html += '<div class="armed-log"><div class="muted">Últimos setups armados' + (s.mode === 'sinais' ? ' · modo só sinais: nenhuma ordem é enviada' : '') +
-        '</div>' + log.slice(0, 6).map(function (l) {
-        return '<div class="row"><span class="when">' + fmtTime(l.target_ts) + '</span>' + dotHtml(l.strategy) + dirHtml(l.direction) +
-          (multi ? '<span>' + esc(l.asset) + '</span>' : '') + '<span>' + esc(l.outcome) + '</span></div>';
-      }).join('') + '</div>';
+    var setups = recentSetups(s).slice(0, 8);
+    if (setups.length) {
+      html += '<div class="armed-log"><div class="muted">Últimos setups</div>' +
+        setups.map(function (g) { return setupRow(g, s, multi); }).join('') + '</div>';
     }
-    el.innerHTML = html;
+    el.innerHTML = openPairsNote(s) + html;
     updateCountdowns();
     updateArmedLines(list);
   }
@@ -434,9 +583,10 @@
       return { kind: 'fail', icon: '✗', title: 'A ORDEM NÃO FOI ENVIADA', reason: what + ' · a gestão de risco bloqueou' + (a.note ? ': ' + a.note : ''), resolved: true };
     }
     var why = {
-      'não disparou': 'o preço não chegou ao gatilho nos 15 s. É o normal: ~92% dos pedidos terminam assim',
+      'não disparou': 'o preço não chegou ao gatilho a tempo. É o normal: a maioria dos pedidos termina assim',
       'rejeitado': 'você rejeitou', 'cancelado por você': 'você cancelou',
-      'expirou sem resposta': 'a janela de 15 s fechou sem aprovação'
+      'cancelado: conexão caiu': 'a conexão com a IQ caiu antes do gatilho (o bot reconecta sozinho)',
+      'expirou sem resposta': 'a janela fechou sem aprovação'
     }[st] || st;
     return { kind: 'none', icon: '—', title: 'NENHUMA ORDEM FOI ENVIADA', reason: what + ' · ' + why, resolved: true };
   }
@@ -506,7 +656,8 @@
     $('#approvals').innerHTML =
       '<div class="ab-chips" id="ab-chips"></div>' +
       '<div class="approval-big" id="ab-big">' +
-        '<div class="ab-chart-wrap"><div class="ab-chart-head" id="ab-chart-head"></div><div id="ab-chart" class="ab-chart"></div>' +
+        '<div class="ab-chart-wrap"><div class="ab-chart-head" id="ab-chart-head"></div>' +
+          '<div class="chart-box" id="ab-chart-box"><div id="ab-chart" class="ab-chart"></div></div>' +
           '<div class="ab-legend" id="ab-legend"></div></div>' +
         '<div class="ab-side" id="ab-side"></div>' +
       '</div>' +
@@ -514,7 +665,10 @@
     if (LWC) {
       state.abChart = makeChart($('#ab-chart'));
       state.abSeries = state.abChart.addCandlestickSeries(candleColors());
+      state.abBuy = state.abChart.addLineSeries(ldpLineOptions('--line-buy'));
+      state.abSell = state.abChart.addLineSeries(ldpLineOptions('--line-sell'));
       state.abLines = [];
+      addChartNav($('#ab-chart-box'), state.abChart, state.abSeries);
     }
   }
 
@@ -528,16 +682,23 @@
   function renderApprovalChart(a) {
     var bars = approvalBars(a);
     var color = strategyColor(a.strategy);
-    $('#ab-chart-head').innerHTML = '<strong>' + esc(a.asset) + ' · M1</strong> <span class="muted small">últimas ' + bars.length +
+    $('#ab-chart-head').innerHTML = '<strong>' + esc(a.asset) + ' · M' + ((a.timeframe || 60) / 60) + '</strong> <span class="muted small">últimas ' + bars.length +
       ' velas · vela de comando marcada · a vela da entrada se mexe ao vivo</span>';
     $('#ab-legend').innerHTML =
       '<span class="key"><span class="line-key dashed" style="border-color:' + color + '"></span>Gatilho ' + fmtPrice(a.level_price) + '</span>' +
       (a.open_price != null ? '<span class="key"><span class="dotted-key"></span>Abertura da vela da entrada ' + fmtPrice(a.open_price) + '</span>' : '') +
-      '<span class="key">' + (a.direction === 'call' ? '▲' : '▼') + ' vela de comando (' + fmtTime(a.target_ts - (a.timeframe || 60)) + ')</span>';
+      '<span class="key">' + (a.direction === 'call' ? '▲' : '▼') + ' vela de comando (' + fmtTime(a.target_ts - (a.timeframe || 60)) + ')</span>' +
+      (scriptOn('ldp_lines') || scriptOn('ldp_arrows') ? '<span class="key">Linhas e CALL/PUT: script LDP v1.3 (só desenho, não decide entrada)</span>' : '');
     if (!state.abSeries || !bars.length) return;
     var prec = precision(bars[bars.length - 1].close);
     state.abSeries.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: Math.pow(10, -prec) } });
     state.abSeries.setData(bars);
+    var overlay = a.overlay || {};
+    var showLines = scriptOn('ldp_lines');
+    state.abBuy.applyOptions({ visible: showLines });
+    state.abSell.applyOptions({ visible: showLines });
+    state.abBuy.setData(overlay.buy_line || []);
+    state.abSell.setData(overlay.sell_line || []);
     state.abLines.forEach(function (pl) { state.abSeries.removePriceLine(pl); });
     state.abLines = [state.abSeries.createPriceLine({
       price: a.level_price, color: color, lineWidth: 2, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: true, title: 'Gatilho'
@@ -548,13 +709,17 @@
       }));
     }
     var cmdTime = a.target_ts - (a.timeframe || 60);
-    state.abSeries.setMarkers(bars.some(function (b) { return b.time === cmdTime; }) ? [{
-      time: cmdTime, position: a.direction === 'call' ? 'belowBar' : 'aboveBar', color: color,
-      shape: a.direction === 'call' ? 'arrowUp' : 'arrowDown', text: 'comando'
-    }] : []);
+    var marks = scriptOn('ldp_arrows') ? (overlay.script_marks || []).map(scriptMarker) : [];
+    if (bars.some(function (b) { return b.time === cmdTime; })) {
+      marks.push({
+        time: cmdTime, position: a.direction === 'call' ? 'belowBar' : 'aboveBar', color: color,
+        shape: a.direction === 'call' ? 'arrowUp' : 'arrowDown', text: 'comando'
+      });
+    }
+    state.abSeries.setMarkers(marks.sort(byTime));
     if (state.abKey !== String(a.id)) {
       state.abKey = String(a.id);
-      state.abChart.timeScale().setVisibleLogicalRange({ from: bars.length - 48, to: bars.length + 3 });
+      state.abChart.timeScale().setVisibleLogicalRange({ from: bars.length - 48, to: bars.length + FOCUS_MARGIN_BARS });
     }
   }
 
@@ -661,7 +826,11 @@
   function showDemoApproval() {
     unlockAudio();
     var data = state.chartData;
-    var candles = data && data.candles && data.candles.length >= 15 ? data.candles.slice(-60) : syntheticCandles();
+    var realCandles = !!(data && data.candles && data.candles.length >= 15);
+    var candles = realCandles ? data.candles.slice(-60) : syntheticCandles();
+    var since = function (p) { return p.time >= candles[0].time; };
+    var overlay = realCandles ? { buy_line: data.buy_line.filter(since), sell_line: data.sell_line.filter(since),
+      script_marks: (data.script_marks || []).filter(since) } : null;
     var asset = (data && data.asset) || (state.config && state.config.assets[0]) || 'EURUSD-op';
     var last = candles[candles.length - 1];
     var ranges = candles.slice(-15, -1).map(function (c) { return c.high - c.low; });
@@ -672,7 +841,7 @@
     state.demoApproval = {
       id: 'exemplo-' + state.demoSeq, demo: true, asset: asset, timeframe: 60, strategy: 'retracao_comando', direction: dir,
       level_price: dir === 'call' ? last.close - 0.8 * atr : last.close + 0.8 * atr, target_ts: last.time + 60,
-      deadline: serverNow() + 45, window_seconds: 15, status: 'aguardando', excerpt: candles, trigger_price: null, note: null,
+      deadline: serverNow() + 45, window_seconds: 15, status: 'aguardando', excerpt: candles, overlay: overlay, trigger_price: null, note: null,
       open_price: last.close
     };
     state.abKey = null;
@@ -760,7 +929,7 @@
 
   function chooseAccount(acct) {
     var s = state.status;
-    if (s && (s.status === 'rodando' || s.status === 'conectando')) { showBanner('Pare o bot antes de trocar de conta.'); return; }
+    if (isBusy(s)) { showBanner('Pare o bot antes de trocar de conta.'); return; }
     if (acct === (state.chosenAccount || 'PRACTICE')) return;
     var body = { account: acct };
     if (acct === 'REAL') {
@@ -786,14 +955,15 @@
     if (!risk) { el.innerHTML = ''; return; }
     var c = risk.config;
     var cells = [
-      ['Resultado da sessão', '<span class="' + signClass(risk.pnl) + '">' + fmtMoney(risk.pnl, true) + '</span>'],
+      ['Resultado', '<span class="' + signClass(risk.pnl) + '">' + fmtMoney(risk.pnl, true) + '</span>'],
       ['Ordens', intFmt.format(risk.trades) + (risk.open_orders ? ' + ' + risk.open_orders + ' aberta' + (risk.open_orders > 1 ? 's' : '') : '')],
       ['W · L', risk.wins + ' · ' + risk.losses]
     ];
-    var html = cells.map(function (x) { return '<div class="cell"><div class="v">' + x[1] + '</div><div class="l">' + x[0] + '</div></div>'; }).join('');
+    var html = '<div class="orders-cap">Nesta sessão</div>' +
+      cells.map(function (x) { return '<div class="cell"><div class="v">' + x[1] + '</div><div class="l">' + x[0] + '</div></div>'; }).join('');
     html += '<div class="risk-line muted small">Entrada ' + fmtMoney(c.stake) + ' · stop win ' + (c.stop_win ? fmtMoney(c.stop_win) : 'desligado') +
       ' · stop loss ' + (c.stop_loss ? fmtMoney(c.stop_loss) : 'desligado') +
-      (c.martingale ? ' · martingale até ' + c.gale_levels + ' gale' + (c.gale_levels > 1 ? 's' : '') : '') + '</div>';
+      (c.martingale ? ' · martingale até ' + c.gale_levels + ' gale' + (c.gale_levels > 1 ? 's' : '') : '') + filtersText() + '</div>';
     if (c.martingale && risk.gale_level > 0) {
       html += '<div class="blocked">Próxima entrada aprovada é o gale ' + risk.gale_level + ': ' + fmtMoney(risk.next_stake) + '</div>';
     }
@@ -821,12 +991,22 @@
     }
   }
 
+  // Filtros de entrada da Configuração, para a linha da gestão de risco ("payout mín. 80% · das 09:00 às 17:00").
+  function filtersText() {
+    var cfg = state.config;
+    if (!cfg) return '';
+    var out = '';
+    if (cfg.min_payout != null) out += ' · payout mín. ' + Math.round(cfg.min_payout * 100) + '%';
+    if (cfg.hours_start && cfg.hours_end) out += ' · opera das ' + cfg.hours_start + ' às ' + cfg.hours_end;
+    return out;
+  }
+
   function refreshOrders() {
     api('/api/orders?period=hoje&limit=100').then(function (rows) {
       rows.forEach(function (o) { state.ordersById[o.id] = o; });
       var el = $('#orders');
       if (!rows.length) {
-        el.innerHTML = '<li class="empty">Nenhuma ordem enviada hoje. Quando o gatilho disparar e a ordem sair, ela aparece aqui.</li>';
+        el.innerHTML = '<li class="empty">Nenhuma ordem hoje.</li>';
         return;
       }
       el.innerHTML = rows.map(function (o) {
@@ -846,15 +1026,19 @@
   function updateStatusSub() {
     var s = state.status;
     var el = $('#status-sub');
-    if (!s || (s.status !== 'rodando' && s.status !== 'conectando')) { el.textContent = ''; return; }
+    if (!isBusy(s)) { el.textContent = ''; return; }
     if (s.progress) { el.textContent = s.progress; return; }
     var n = (s.assets || []).length;
     var what = n > 1 ? n + ' pares' : (s.asset || '');
-    el.textContent = what + ' · M' + (s.timeframe / 60) + (s.status === 'rodando' && s.started_at ? ' · ' + elapsed(s.started_at) : '');
+    el.textContent = what + ' · M' + (s.timeframe / 60) + (s.status === 'rodando' && s.started_at ? ' · ' + elapsed(s.started_at) : '') +
+      reconnectNote(s.connection);
+    var d = s.connection && s.connection.last_drop;
+    el.title = d ? 'Última queda: ' + fmtTime(d.at) + ' (' + d.reason + '). Voltou sozinho às ' + fmtTime(d.back_at) +
+      ' na tentativa ' + d.attempts + '.' : '';
   }
   function toggleBot() {
     var s = state.status;
-    var busy = s && (s.status === 'rodando' || s.status === 'conectando');
+    var busy = isBusy(s);
     var btn = $('#btn-toggle');
     btn.disabled = true;
     if (busy) {
@@ -869,8 +1053,26 @@
       .then(renderStatus)
       .catch(function (e) { showBanner(e.message); btn.disabled = false; });
   }
-  function showBanner(msg) { var b = $('#banner'); b.textContent = msg; b.hidden = false; }
+  function showBanner(msg, kind) { var b = $('#banner'); b.textContent = msg; b.classList.toggle('warn', kind === 'warn'); b.hidden = false; }
   function hideBanner() { $('#banner').hidden = true; }
+
+  // Aviso enquanto o bot reconecta sozinho (não é erro: ninguém precisa fazer nada).
+  function reconnectText(c) {
+    var text = c.initial
+      ? 'A IQ Option não respondeu ao entrar. O bot está tentando de novo sozinho' + (c.attempt ? ', tentativa ' + c.attempt : '') +
+        '. Assim que conectar, ele começa; não precisa fazer nada.'
+      : 'A conexão com a IQ Option caiu' + (c.since ? ' às ' + fmtTime(c.since) : '') +
+        (c.reason ? ' (' + c.reason + ')' : '') + '. O bot está reconectando sozinho' +
+        (c.attempt ? ', tentativa ' + c.attempt : '') + '. Nenhuma ordem sai até voltar; não precisa fazer nada.';
+    if (c.last_error && c.attempt > 1) text += ' Última tentativa: ' + c.last_error;
+    return text;
+  }
+  // "reconectou 2× · última às 03:14 (fora 1 min)" no status, depois que voltou.
+  function reconnectNote(c) {
+    if (!c || !c.drops || c.state !== 'ok' || !c.last_drop) return '';
+    var d = c.last_drop, away = Math.max(1, Math.round((d.back_at - d.at) / 60));
+    return ' · reconectou ' + c.drops + '× (última às ' + fmtTime(d.back_at) + ', ' + away + ' min fora)';
+  }
 
   // ------------------------------------------------------------------ indicadores (Painel e Desempenho)
   function renderKpis(prefix, st) {
@@ -902,36 +1104,104 @@
     renderScope();
     api('/api/stats?period=hoje&origin=ao_vivo' + scopeQuery()).then(function (st) {
       renderKpis('p', st);
-      if (!st.total.n && !st.total.draws) {
-        $('#p-profit-sub').textContent = state.showComparison ? 'nenhuma entrada ao vivo hoje'
-          : 'a estratégia principal ainda não entrou hoje (ela é seletiva: só entra quando a vela forte é seguida do recuo nos 15 s)';
-      } else $('#p-profit-sub').textContent = 'em entradas · ganho = +payout, perda = −1';
+      $('#p-profit-sub').textContent = !st.total.n && !st.total.draws
+        ? 'nenhuma entrada hoje (só entra quando o gatilho dispara)'
+        : 'em entradas · ganho = +payout, perda = −1';
     }).catch(function () {});
-    // O placar mostra sempre todas, para comparar.
+    // O placar mostra cada estratégia ligada, inclusive as que só observam.
     api('/api/stats?period=hoje&origin=ao_vivo').then(function (st) { renderBoard(st.by_strategy); }).catch(function () {});
     api('/api/signals?period=hoje&origin=ao_vivo&limit=200' + scopeQuery()).then(renderFeed).catch(function () {});
+    refreshValidation();
   }
 
-  // Scripts de comparação rodando? (Configuração; vale a partir do início do bot.)
-  function comparisonOn() {
-    var s = state.status;
-    if (s && (s.status === 'rodando' || s.status === 'conectando') && s.comparison != null) return !!s.comparison;
-    return !!(state.config && state.config.comparison);
-  }
-  function renderScope() {
-    if (!comparisonOn()) {
-      $('#p-scope').innerHTML = '<span>Números e entradas de hoje: ' + mainStrategies().map(stratHtml).join(' ') + '</span>' +
-        '<span class="muted small">Scripts de comparação desligados: só a estratégia que opera é avaliada. Dá para ligar na Configuração.</span>';
+  // ------------------------------------------------------------------ placar de validação ao vivo
+  var VAL_LO = 0.30, VAL_HI = 0.80;  // escala da faixa de acerto
+  var VERDICT_INFO = {
+    comecando: { cls: '', icon: '…' }, juntando: { cls: '', icon: '…' }, empate: { cls: 'warn', icon: '≈' },
+    vantagem: { cls: 'good', icon: '✓' }, abaixo: { cls: 'bad', icon: '✗' }, sem_vantagem: { cls: 'bad', icon: '✗' }
+  };
+  function valPos(v) { return Math.max(0, Math.min(100, (v - VAL_LO) / (VAL_HI - VAL_LO) * 100)); }
+  function refreshValidation() { api('/api/validation').then(renderValidation).catch(function () {}); }
+  function renderValidation(data) {
+    var list = (data && data.strategies) || [];
+    var body = $('#val-body');
+    if (!list.length) {
+      $('#val-tag').textContent = 'nenhuma';
+      $('#val-since').textContent = '';
+      body.innerHTML = '<p class="muted">Nenhuma estratégia ligada. Escolha em Configuração.</p>';
       return;
     }
-    var who = state.showComparison ? '<span class="key">todas as estratégias</span>'
-      : mainStrategies().map(stratHtml).join(' ');
-    $('#p-scope').innerHTML = '<span>Números e entradas de hoje: ' + who + '</span>' +
-      '<label class="check"><input type="checkbox" id="show-comparison"' + (state.showComparison ? ' checked' : '') +
-      '> incluir os scripts de comparação (LDP v1.3, regra das linhas, WIKI PRO: ~49% na pesquisa)</label>';
+    $('#val-tag').textContent = list.map(function (v) { return v.label; }).join(' · ');
+    var first = list[0];
+    $('#val-since').textContent = first.first_ts
+      ? 'só entradas ao vivo, sem OTC · desde ' + dayFmt.format(new Date(first.first_ts * 1000))
+      : 'só entradas ao vivo, sem OTC, desde o último "zerar histórico"';
+    body.innerHTML = list.map(validationHtml).join('');
+    Array.prototype.forEach.call(body.querySelectorAll('.val-range'), function (el) {
+      var v = list[Number(el.dataset.i)];
+      if (v) tipData.set(el, validationTip(v));
+    });
   }
+  function validationHtml(v, i) {
+    var pct = Math.min(100, v.n / v.target * 100);
+    var need = v.needed[String(v.target)];
+    var info = VERDICT_INFO[v.verdict.code] || VERDICT_INFO.juntando;
+    var days = v.eta_days ? Math.ceil(v.eta_days) : 0;
+    var pace = v.per_day
+      ? '~' + intFmt.format(Math.round(v.per_day)) + ' por dia' + (days ? ' · faltam ~' + intFmt.format(days) + (days > 1 ? ' dias' : ' dia') : '')
+      : 'o ritmo por dia aparece depois do primeiro dia';
+    var range = '';
+    if (v.n) {
+      range = '<div class="val-range" tabindex="0" data-i="' + i + '" aria-label="Acerto ' + fmtPct(v.winrate) + ', faixa de ' +
+        fmtPct(v.ci_low) + ' a ' + fmtPct(v.ci_high) + ', empate ' + fmtPct(v.breakeven) + '">' +
+        '<span class="band" style="left:' + valPos(v.ci_low) + '%;width:' + Math.max(1, valPos(v.ci_high) - valPos(v.ci_low)) + '%"></span>' +
+        '<span class="be" style="left:' + valPos(v.breakeven) + '%"><em>empate ' + fmtPct(v.breakeven) + '</em></span>' +
+        (need ? '<span class="need" style="left:' + valPos(need) + '%"><em>meta ' + fmtPct(need) + '</em></span>' : '') +
+        '<span class="dot" style="left:' + valPos(v.winrate) + '%"></span></div>';
+    }
+    var o = v.orders;
+    var orders = o.count
+      ? 'Ordens desta estratégia: ' + intFmt.format(o.count) + ' · resultado <span class="' + signClass(o.profit) + '">' + fmtMoney(o.profit, true) + '</span>'
+      : 'Nenhuma ordem enviada por esta estratégia ainda.';
+    var stats = v.n
+      ? v.wins + ' W · ' + v.losses + ' L' + (v.draws ? ' · ' + v.draws + (v.draws > 1 ? ' empates' : ' empate') : '') +
+        ' · faixa provável ' + fmtPct(v.ci_low) + ' a ' + fmtPct(v.ci_high)
+      : 'sem entradas ao vivo ainda';
+    return '<div class="val-grid">' +
+      '<div class="val-cell"><div class="val-big">' + intFmt.format(v.n) + ' <span class="val-of">de ' + intFmt.format(v.target) + ' entradas</span></div>' +
+        '<div class="meter" role="progressbar" aria-label="Entradas ao vivo" aria-valuemin="0" aria-valuemax="' + v.target + '" aria-valuenow="' + v.n + '">' +
+        '<span style="width:' + pct + '%"></span></div>' +
+        '<div class="muted small">' + pace + '</div></div>' +
+      '<div class="val-cell"><div class="val-big">' + (v.n ? fmtPct(v.winrate) : '—') + ' <span class="val-of">acerto ao vivo</span></div>' +
+        range + '<div class="muted small">' + stats + '</div></div>' +
+      '<div class="val-cell val-verdict ' + info.cls + '">' +
+        '<div class="val-title"><span class="icon" aria-hidden="true">' + info.icon + '</span> ' + esc(v.verdict.title) + '</div>' +
+        '<p class="small">' + esc(v.verdict.detail) +
+        (need && v.n < v.target ? ' Com ' + intFmt.format(v.target) + ' entradas, provar vantagem pede ~' + fmtPct(need) + ' de acerto.' : '') + '</p>' +
+        '<div class="muted small">' + orders + '</div></div>' +
+      '</div>';
+  }
+  function validationTip(v) {
+    return '<strong>' + esc(v.label) + '</strong><br>Acerto ao vivo: ' + fmtPct(v.winrate) + ' (' + v.wins + ' de ' + v.n + ')<br>' +
+      'Faixa provável (95%): ' + fmtPct(v.ci_low) + ' a ' + fmtPct(v.ci_high) + '<br>Empate: ' + fmtPct(v.breakeven) +
+      '<br>A vantagem só está provada quando o começo da faixa passa do empate.';
+  }
+
+  function renderScope() {
+    if (!state.config) return;
+    var main = mainStrategies();
+    if (!main.length) {
+      $('#p-scope').innerHTML = '<span>Nenhuma estratégia ligada. Escolha em Configuração.</span>';
+      return;
+    }
+    var observing = strategiesIn(['observe']).filter(function (n) { return main.indexOf(n) < 0; });
+    $('#p-scope').innerHTML = '<span>Números e entradas de hoje: ' + main.map(function (n) { return stratHtml(n); }).join(' ') + '</span>' +
+      (observing.length ? '<span class="muted small">Só observando: ' + esc(observing.map(label).join(', ')) + '</span>' : '');
+  }
+  // As que estão rodando agora (ligar ou desligar vale no próximo início); com o bot parado, as ligadas.
   function shownStrategies() {
-    return comparisonOn() ? STRATEGY_ORDER : STRATEGY_ORDER.filter(isMain);
+    var s = state.status;
+    return isBusy(s) && s.active_strategies ? s.active_strategies : strategiesIn(['operate', 'observe']);
   }
 
   function renderBoard(groups) {
@@ -939,7 +1209,7 @@
     groups.forEach(function (g) { byKey[g.key] = g; });
     $('#p-board').innerHTML = shownStrategies().map(function (name) {
       var g = byKey[name] || { n: 0, draws: 0, wins: 0, losses: 0, winrate: null, profit: 0 };
-      return '<tr><td>' + stratHtml(name) + (isMain(name) ? '<span class="tag">principal</span>' : '<span class="tag">comparação</span>') +
+      return '<tr><td>' + stratHtml(name) + '<span class="tag">' + (strategyState(name) === 'operate' ? 'opera' : 'observa') + '</span>' +
         '</td><td class="num">' + intFmt.format(g.n + g.draws) + '</td><td class="num">' +
         g.wins + ' · ' + g.losses + '</td><td class="num">' + fmtPct(g.winrate) + '</td><td class="num ' + signClass(g.profit) + '">' +
         ((g.n + g.draws) ? fmtUnits(g.profit) : '—') + '</td></tr>';
@@ -961,7 +1231,112 @@
   }
 
   function refreshChart() {
-    return api('/api/chart?limit=240').then(renderChart).catch(function () {});
+    return api('/api/chart?limit=240').then(renderChart).then(refreshReading).catch(function () {});
+  }
+
+  // ------------------------------------------------------------------ leitura do estudo no gráfico
+  // Caixa = lote · faixa = região (com o lado da leitura) · rótulo = padrão na vela. Só desenho: nenhuma estratégia usa isto ainda.
+  var STUDY_STRATEGIES = ['retracao_lote', 'reversao_forca', 'reversao_indecisao'];
+  var READING_LABELS = ['NA', 'NB', 'NP', 'DP', 'TP', 'FA', 'FB', 'NL', 'TR', 'DS', 'TD1', 'TD2', 'TD3', 'TDI', 'TD', 'VD', 'DF'];
+  var READING_BARS = 45;
+  var SCENARIO_INFO = {
+    topos_fundos: { text: 'Topos e fundos', note: 'o melhor cenário para a lógica do preço', cls: 'good' },
+    tendencia: { text: 'Tendência', note: 'melhor para operar fluxo', cls: '' },
+    consolidacao: { text: 'Consolidado', note: 'o estudo não recomenda operar', cls: 'warn' }
+  };
+  var LOT_CAUSE = { reversao: 'reversão', comando: 'comando', fim_de_taxa: 'fim de taxa', rompimento: 'rompimento' };
+  var readingPrimitive = {
+    data: null, chart: null, series: null, request: null,
+    attached: function (p) { this.chart = p.chart; this.series = p.series; this.request = p.requestUpdate; },
+    detached: function () { this.chart = this.series = this.request = null; },
+    updateAllViews: function () {},
+    setData: function (data) { this.data = data; if (this.request) this.request(); },
+    paneViews: function () { return [{ zOrder: function () { return 'bottom'; }, renderer: function () { return { draw: drawReading }; } }]; }
+  };
+  function drawReading(target) {
+    var p = readingPrimitive, d = p.data;
+    if (!d || !p.chart) return;
+    var ts = p.chart.timeScale(), half = ts.options().barSpacing / 2;
+    var buy = cssVar('--line-buy'), sell = cssVar('--line-sell'), neutral = cssVar('--text-muted');
+    target.useMediaCoordinateSpace(function (scope) {
+      var ctx = scope.context;
+      function box(from, to, low, high, color, fill, extendTo) {
+        var x1 = ts.timeToCoordinate(from), x2 = extendTo != null ? extendTo : ts.timeToCoordinate(to);
+        var y1 = p.series.priceToCoordinate(high), y2 = p.series.priceToCoordinate(low);
+        if (x1 == null || x2 == null || y1 == null || y2 == null) return null;
+        ctx.globalAlpha = fill;
+        ctx.fillStyle = color;
+        ctx.fillRect(x1 - half, y1, x2 - x1 + half * 2, Math.max(1, y2 - y1));
+        return { x1: x1 - half, x2: x2 + half, y1: y1, y2: y2 };
+      }
+      d.lots.forEach(function (lot) {
+        var color = lot.direction > 0 ? buy : sell;
+        var b = box(lot.from, lot.to, lot.low, lot.high, color, 0.07);
+        if (!b) return;
+        ctx.globalAlpha = 0.55;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, Math.max(1, b.y2 - b.y1));
+      });
+      var right = scope.mediaSize.width;
+      ctx.font = '10px system-ui, sans-serif';
+      d.regions.forEach(function (r) {
+        var color = r.side > 0 ? buy : r.side < 0 ? sell : neutral;
+        var b = box(r.from, r.to, r.low, r.high, color, r.active ? 0.22 : 0.06, r.active ? right : null);
+        if (!b) return;
+        ctx.globalAlpha = r.active ? 0.9 : 0.3;
+        ctx.fillRect(b.x1, b.y1, b.x2 - b.x1, 1);
+        if (b.y2 - b.y1 > 1) ctx.fillRect(b.x1, b.y2 - 1, b.x2 - b.x1, 1);
+        if (r.active) {
+          ctx.globalAlpha = 1;
+          ctx.fillText(r.code, Math.max(b.x1 + 2, 2), b.y1 - 2);
+        }
+      });
+      ctx.globalAlpha = 1;
+    });
+  }
+  function refreshReading() {
+    var legend = $('#reading-legend');
+    if (!state.showReading || !state.chartData || !state.chartData.asset) {
+      state.readingData = null;
+      state.readingByTime = {};
+      legend.hidden = true;
+      readingPrimitive.setData(null);
+      return null;
+    }
+    return api('/api/reading?limit=240&asset=' + encodeURIComponent(state.chartData.asset)).then(function (data) {
+      state.readingData = data;
+      state.readingByTime = {};
+      data.tags.forEach(function (t) { (state.readingByTime[t.time] = state.readingByTime[t.time] || []).push(t); });
+      readingPrimitive.setData(data);
+      applyMarkers();
+      var sc = SCENARIO_INFO[data.scenario];
+      legend.innerHTML = (sc ? '<span class="scenario ' + sc.cls + '">Agora: <strong>' + sc.text + '</strong> · ' + sc.note + ' (pág. 223)</span>' : '') +
+        '<span class="key">Caixa = lote · faixa = região (verde, buscou é CALL; vermelha, buscou é PUT; cinza, indecisão)</span>' +
+        '<span class="key">NA nova alta · NB nova baixa · NP nova posição · DP dupla · TP tripla · FA/FB futuro · NL nano-lote · TD taxa dividida · TR transferência · DS desinstalação · DF defesa · VD vela de força na defesa</span>' +
+        '<span class="key">Só desenho: nenhuma estratégia usa esta leitura ainda. Passe o mouse na vela para ver cada padrão com a página.</span>';
+      legend.hidden = false;
+    });
+  }
+  function readingMarkers() {
+    var d = state.readingData;
+    if (!state.showReading || !d) return [];
+    return d.tags.filter(function (t) { return READING_LABELS.indexOf(t.code) >= 0; }).map(function (t) {
+      return { time: t.time, position: t.direction > 0 ? 'belowBar' : 'aboveBar', shape: 'circle', size: 0.4, text: t.code,
+        color: cssVar(t.direction > 0 ? '--line-buy' : t.direction < 0 ? '--line-sell' : '--text-secondary') };
+    });
+  }
+  function readingReadout(time) {
+    if (!state.showReading || !state.readingData) return '';
+    var html = (state.readingByTime[time] || []).map(function (t) {
+      return esc(t.label) + (t.detail ? ' (' + esc(t.detail) + ')' : '') + ' <span class="muted">pág. ' + t.page + '</span>';
+    }).join(' · ');
+    var lot = state.readingData.lots.filter(function (l) { return l.from <= time && time <= l.to; }).pop();
+    if (lot) {
+      html += (html ? ' · ' : '') + 'Lote de ' + (lot.direction > 0 ? 'compra' : 'venda') + ', aberto por ' + (LOT_CAUSE[lot.open_cause] || lot.open_cause) +
+        (lot.close_cause ? ', fechado por ' + (LOT_CAUSE[lot.close_cause] || lot.close_cause) : '');
+    }
+    return html ? ' &nbsp;|&nbsp; ' + html : '';
   }
 
   function renderChart(data) {
@@ -969,7 +1344,7 @@
     if (!mainChart) return;
     $('#chart-title').textContent = data.asset ? data.asset + ' · M' + ((data.timeframe || 60) / 60) : 'Gráfico';
     if (!data.candles || !data.candles.length) {
-      candleSeries.setData([]); buySeries.setData([]); sellSeries.setData([]); candleSeries.setMarkers([]);
+      candleSeries.setData([]); buySeries.setData([]); sellSeries.setData([]); applyMarkers();
       $('#p-price').textContent = '—';
       $('#p-price-sub').textContent = 'inicie o bot para ver o gráfico';
       renderReading(null);
@@ -981,6 +1356,9 @@
     var bars = data.candles.slice();
     if (data.forming && data.forming.time > last.time) bars.push(data.forming);
     candleSeries.setData(bars);
+    var showLines = scriptOn('ldp_lines') && !state.showReading;  // na leitura do estudo, os scripts saem para não embolar
+    buySeries.applyOptions({ visible: showLines });
+    sellSeries.applyOptions({ visible: showLines });
     buySeries.setData(data.buy_line);
     sellSeries.setData(data.sell_line);
     applyMarkers();
@@ -997,7 +1375,7 @@
 
     var key = data.asset + ':' + data.timeframe;
     if (state.chartKey !== key) {
-      mainChart.timeScale().setVisibleLogicalRange({ from: bars.length - 90, to: bars.length + 3 });
+      mainChart.timeScale().setVisibleLogicalRange({ from: bars.length - 90, to: bars.length + FOCUS_MARGIN_BARS });
       state.chartKey = key;
     }
     var current = bars[bars.length - 1];
@@ -1010,18 +1388,55 @@
     var d = state.chartData;
     if (!d || !candleSeries) return;
     state.markersByTime = {};
+    state.scriptMarksByTime = {};
+    state.entriesByTime = {};
     var markers = [];
-    d.markers.forEach(function (m) {
+    var sent = {};  // entrada que virou ordem: a marca de ENTRADA fala por ela
+    (d.entries || []).forEach(function (o) {
+      if (o.signal_id != null) sent[o.signal_id] = true;
+      (state.entriesByTime[o.time] = state.entriesByTime[o.time] || []).push(o);
+      markers.push(entryMarker(o));
+    });
+    (d.markers || []).forEach(function (m) {
       if (!state.visible[m.strategy]) return;
       if (m.origin === 'backtest' && !state.showBacktest) return;
       (state.markersByTime[m.time] = state.markersByTime[m.time] || []).push(m);
-      markers.push({
-        time: m.time, position: m.direction === 'call' ? 'belowBar' : 'aboveBar',
+      if (sent[m.id]) return;
+      markers.push({  // só anotada: seta pequena, na cor da estratégia
+        time: m.time, position: m.direction === 'call' ? 'belowBar' : 'aboveBar', size: 0.7,
         color: strategyColor(m.strategy), shape: m.direction === 'call' ? 'arrowUp' : 'arrowDown',
         text: (RESULT_INFO[m.result] || { icon: '' }).icon
       });
     });
-    candleSeries.setMarkers(markers);
+    if (!state.showReading) {
+      if (scriptOn('ldp_arrows')) {
+        (d.script_marks || []).forEach(function (m) {
+          (state.scriptMarksByTime[m.time] = state.scriptMarksByTime[m.time] || []).push({ name: label('ldp_v13'), mark: m });
+          markers.push(scriptMarker(m));
+        });
+      }
+      (d.wiki_marks || []).forEach(function (m) {
+        (state.scriptMarksByTime[m.time] = state.scriptMarksByTime[m.time] || []).push({ name: label('wiki_pro_v21'), mark: m });
+        markers.push(Object.assign(scriptMarker(m), { color: strategyColor('wiki_pro_v21'), size: 0.8,
+          text: 'WIKI ' + (m.direction === 'call' ? 'CALL' : 'PUT') }));
+      });
+    }
+    markers = markers.concat(readingMarkers());
+    candleSeries.setMarkers(markers.sort(byTime));
+    renderEntryLines(d.entries || []);
+  }
+
+  // Ordem aberta: uma linha no preço de entrada, para ver se está ganhando até o vencimento.
+  function renderEntryLines(entries) {
+    state.entryLines.forEach(function (pl) { candleSeries.removePriceLine(pl); });
+    state.entryLines = entries.filter(function (o) {
+      return (o.status === 'enviando' || o.status === 'aberta') && o.price != null;
+    }).map(function (o) {
+      return candleSeries.createPriceLine({
+        price: o.price, color: cssVar('--text-primary'), lineWidth: 2, lineStyle: LWC.LineStyle.Solid,
+        axisLabelVisible: true, title: 'Entrada ' + (o.direction === 'call' ? 'CALL' : 'PUT')
+      });
+    });
   }
 
   function onCrosshair(param) {
@@ -1034,9 +1449,19 @@
     if (!bar) return;
     var html = '<strong>' + fmtDateTime(param.time) + '</strong> · A ' + fmtPrice(bar.open) + ' · M ' + fmtPrice(bar.high) +
       ' · m ' + fmtPrice(bar.low) + ' · F ' + fmtPrice(bar.close);
+    (state.entriesByTime[param.time] || []).forEach(function (o) {
+      var outcome = RESULT_INFO[o.status] ? resHtml(o.status) + (o.profit != null ? ' ' + fmtMoney(o.profit, true) : '')
+        : esc((ORDER_INFO[o.status] || { text: o.status }).text);
+      html += ' &nbsp;|&nbsp; <strong>ENTRADA</strong> ' + dirHtml(o.direction) + ' ' + fmtPrice(o.price) + ' · ' + fmtMoney(o.amount) +
+        ' · ' + stratHtml(o.strategy) + ' ' + outcome;
+    });
     (state.markersByTime[param.time] || []).forEach(function (s) {
       html += ' &nbsp;|&nbsp; ' + stratHtml(s.strategy) + ' ' + dirHtml(s.direction) + ' ' + esc(s.setup) + ' ' + resHtml(s.result);
     });
+    (state.scriptMarksByTime[param.time] || []).forEach(function (s) {
+      html += ' &nbsp;|&nbsp; <span class="muted">script ' + esc(s.name) + ':</span> ' + dirHtml(s.mark.direction) + ' ' + esc(s.mark.setup);
+    });
+    html += readingReadout(param.time);
     out.innerHTML = html;
   }
 
@@ -1062,10 +1487,15 @@
   }
   function renderLineLegend() {
     $('#line-legend').innerHTML =
-      '<span class="key"><span class="line-key" style="background:' + cssVar('--line-buy') + '"></span>Linha verde · 50% do último comando de alta</span>' +
-      '<span class="key"><span class="line-key" style="background:' + cssVar('--line-sell') + '"></span>Linha vermelha · 50% do último comando de baixa</span>' +
-      '<span class="key"><span class="dotted-key"></span>Suporte / resistência mais próximos (apostila · F = força 1–3)</span>' +
-      '<span class="key">▲▼ sinal · ✓ win · ✗ loss · … pendente</span>';
+      '<span class="key"><strong>ENTRADA CALL / PUT</strong> · ordem enviada, com o preço e o resultado (✓ ✗ …)</span>' +
+      '<span class="key">▲▼ pequena · entrada só anotada pela estratégia, sem ordem</span>' +
+      (scriptOn('ldp_arrows') && !state.showReading ? '<span class="key">▲ CALL ▼ PUT · script LDP v1.3 (só desenho, não decide entrada)</span>' : '') +
+      (scriptOn('wiki_pro') && !state.showReading ? '<span class="key">WIKI CALL / PUT · script WIKI PRO (só desenho, não decide entrada)</span>' : '') +
+      (scriptOn('ldp_lines') && !state.showReading
+        ? '<span class="key"><span class="line-key" style="background:' + cssVar('--line-buy') + '"></span>Linha verde · 50% do último comando de alta</span>' +
+          '<span class="key"><span class="line-key" style="background:' + cssVar('--line-sell') + '"></span>Linha vermelha · 50% do último comando de baixa</span>'
+        : '') +
+      '<span class="key"><span class="dotted-key"></span>Suporte / resistência mais próximos (apostila · F = força 1–3)</span>';
   }
 
   function renderReading(r) {
@@ -1236,15 +1666,52 @@
   // ------------------------------------------------------------------ CONFIGURAÇÃO
   function loadConfig(fillForm) {
     return api('/api/config').then(function (cfg) {
-      state.config = cfg;
-      renderToolbarAssets();
-      syncVisible();
-      renderToggles();
-      applyMarkers();
-      if (state.page === 'painel') refreshToday();
+      configChanged(cfg);
       if (fillForm) fillConfigForm(cfg);
       return cfg;
     }).catch(function (e) { if (fillForm) setResult('#cfg-save-result', false, 'Erro ao carregar: ' + e.message); });
+  }
+  function configChanged(cfg) {
+    state.config = cfg;
+    renderToolbarAssets();
+    syncVisible();
+    renderToggles();
+    renderLineLegend();
+    refreshChart();
+    if (state.page === 'painel') refreshToday();
+  }
+
+  var STRATEGY_NOTES = {
+    retracao_comando: '~54% na pesquisa · ainda sem vantagem comprovada',
+    ldp_apostila: '48% na pesquisa · não recomendado',
+    retracao_lote: 'nova · em pesquisa · pág. 162',
+    reversao_forca: 'nova · em pesquisa · vela de força trava na defesa e reverte',
+    reversao_indecisao: 'nova · em pesquisa · força rompe dupla/tripla e volta'
+  };
+  var STATE_LABELS = { off: 'Desligada', observe: 'Observar', operate: 'Operar' };
+  function renderStrategyChoices(cfg) {
+    $('#cfg-strats').innerHTML = (cfg.strategy_names || []).map(function (name) {
+      var current = (cfg.strategies && cfg.strategies[name]) || 'off';
+      var note = STRATEGY_NOTES[name];
+      return '<tr><th scope="row">' + dotHtml(name) + esc(label(name)) + (note ? '<div class="muted small">' + esc(note) + '</div>' : '') + '</th>' +
+        Object.keys(STATE_LABELS).map(function (st) {
+          return '<td><input type="radio" name="cfg-strat-' + esc(name) + '" value="' + st + '"' + (st === current ? ' checked' : '') +
+            ' aria-label="' + esc(label(name)) + ': ' + STATE_LABELS[st] + '"></td>';
+        }).join('') + '</tr>';
+    }).join('');
+  }
+  function chosenStrategies() {
+    var out = {};
+    ((state.config && state.config.strategy_names) || []).forEach(function (name) {
+      var r = document.querySelector('input[name="cfg-strat-' + name + '"]:checked');
+      out[name] = r ? r.value : 'off';
+    });
+    return out;
+  }
+  function chosenScripts() {
+    var out = {};
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="cfg-script"]'), function (c) { out[c.value] = c.checked; });
+    return out;
   }
 
   function setResult(sel, ok, text) {
@@ -1262,8 +1729,9 @@
       : cfg.credentials_source === 'arquivo .env' ? 'Usando o login do arquivo backend/.env. Preencha aqui para trocar.'
       : 'Nenhum login salvo ainda.';
     Array.prototype.forEach.call(document.querySelectorAll('input[name="cfg-mode"]'), function (r) { r.checked = r.value === cfg.mode; });
-    Array.prototype.forEach.call(document.querySelectorAll('input[name="cfg-strat"]'), function (c) {
-      c.checked = cfg.order_strategies.indexOf(c.value) >= 0;
+    renderStrategyChoices(cfg);
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="cfg-script"]'), function (c) {
+      c.checked = !!(cfg.chart_scripts && cfg.chart_scripts[c.value]);
     });
     state.cfgPairs = cfg.assets.slice();
     renderPairChips();
@@ -1273,7 +1741,9 @@
     $('#cfg-stop-loss').value = cfg.stop_loss == null ? '' : cfg.stop_loss;
     $('#cfg-max-trades').value = cfg.max_trades == null ? '' : cfg.max_trades;
     $('#cfg-max-losses').value = cfg.max_consecutive_losses == null ? '' : cfg.max_consecutive_losses;
-    $('#cfg-comparison').checked = !!cfg.comparison;
+    $('#cfg-min-payout').value = cfg.min_payout == null ? '' : Math.round(cfg.min_payout * 100);
+    $('#cfg-hours-start').value = cfg.hours_start || '';
+    $('#cfg-hours-end').value = cfg.hours_end || '';
     $('#cfg-martingale').checked = !!cfg.martingale;
     $('#cfg-gale-levels').value = String(cfg.gale_levels || 1);
     renderGaleExample();
@@ -1322,14 +1792,17 @@
     var mode = document.querySelector('input[name="cfg-mode"]:checked');
     var patch = {
       mode: mode ? mode.value : 'sinais',
-      order_strategies: Array.prototype.map.call(document.querySelectorAll('input[name="cfg-strat"]:checked'), function (c) { return c.value; }),
+      strategies: chosenStrategies(),
+      chart_scripts: chosenScripts(),
       assets: state.cfgPairs.slice(),
       timeframe: parseInt($('#cfg-timeframe').value, 10),
       stop_win: numField('#cfg-stop-win'),
       stop_loss: numField('#cfg-stop-loss'),
       max_trades: numField('#cfg-max-trades'),
       max_consecutive_losses: numField('#cfg-max-losses'),
-      comparison: $('#cfg-comparison').checked,
+      min_payout: numField('#cfg-min-payout') == null ? null : numField('#cfg-min-payout') / 100,
+      hours_start: $('#cfg-hours-start').value || null,
+      hours_end: $('#cfg-hours-end').value || null,
       martingale: $('#cfg-martingale').checked,
       gale_levels: parseInt($('#cfg-gale-levels').value, 10) || 1
     };
@@ -1352,12 +1825,18 @@
     setResult('#cfg-save-result', null, 'Salvando…');
     var before = state.config;
     putConfig(configPatch()).then(function (cfg) {
-      state.config = cfg;
+      configChanged(cfg);
       fillConfigForm(cfg);
-      renderToolbarAssets();
       var changedRun = before && (before.assets.join() !== cfg.assets.join() || before.timeframe !== cfg.timeframe);
-      setResult('#cfg-save-result', true, 'Configuração salva.' +
-        (cfg.applies_next_start && changedRun ? ' Os pares e a vela valem no próximo início do bot (pare e inicie de novo).' : ''));
+      var isOn = function (st) { return st === 'observe' || st === 'operate'; };
+      var changedOnOff = before && cfg.strategy_names.some(function (n) {
+        return isOn(before.strategies[n]) !== isOn(cfg.strategies[n]);
+      });
+      var nextStart = [];
+      if (changedRun) nextStart.push('os pares e a vela');
+      if (changedOnOff) nextStart.push('ligar ou desligar estratégia');
+      setResult('#cfg-save-result', true, 'Configuração salva.' + (cfg.applies_next_start && nextStart.length
+        ? ' Valem no próximo início do bot (pare e inicie de novo): ' + nextStart.join(' e ') + '.' : ''));
     }).catch(function (err) {
       setResult('#cfg-save-result', false, err.message);
     }).then(function () { btn.disabled = false; });
@@ -1368,9 +1847,13 @@
     btn.disabled = true;
     setResult('#cfg-test-result', null, 'Entrando na IQ Option…');
     var email = $('#cfg-email').value.trim(), pw = $('#cfg-password').value;
+    var saved = (state.config && state.config.iq_email) || '';
     var creds = {};
-    if (pw) { creds.iq_password = pw; if (email) creds.iq_email = email; }
-    var first = pw ? putConfig(creds).then(function (cfg) { state.config = cfg; fillConfigForm(cfg); }) : Promise.resolve();
+    // E-mail novo vai junto mesmo sem senha: o servidor recusa e pede a senha, em vez de testar a conta antiga.
+    if (email && (pw || email.toLowerCase() !== saved.toLowerCase())) creds.iq_email = email;
+    if (pw) creds.iq_password = pw;
+    var changed = creds.iq_email || creds.iq_password;
+    var first = changed ? putConfig(creds).then(function (cfg) { state.config = cfg; fillConfigForm(cfg); }) : Promise.resolve();
     first.then(function () { return api('/api/config/test', { method: 'POST' }); }).then(function (r) {
       setResult('#cfg-test-result', true, 'Conectado · ' + (r.account === 'PRACTICE' ? 'conta demo' : 'conta ' + r.account) + ' · saldo ' + fmtMoney(r.balance));
     }).catch(function (err) {
@@ -1380,7 +1863,7 @@
 
   function resetHistory() {
     var s = state.status;
-    if (s && (s.status === 'rodando' || s.status === 'conectando')) {
+    if (isBusy(s)) {
       setResult('#cfg-reset-result', false, 'Pare o bot antes de zerar o histórico.');
       return;
     }
@@ -1411,12 +1894,12 @@
       tip.style.top = Math.min(y + 14, window.innerHeight - r.height - 8) + 'px';
     }
     document.addEventListener('mousemove', function (e) {
-      var t = e.target.closest ? e.target.closest('.bar-row, .col') : null;
+      var t = e.target.closest ? e.target.closest('.bar-row, .col, .val-range') : null;
       if (t) show(t, e.clientX, e.clientY); else tip.hidden = true;
     });
     document.addEventListener('focusin', function (e) {
       var t = e.target;
-      if (t.classList && (t.classList.contains('bar-row') || t.classList.contains('col'))) {
+      if (t.classList && (t.classList.contains('bar-row') || t.classList.contains('col') || t.classList.contains('val-range'))) {
         var b = t.getBoundingClientRect();
         show(t, b.left + b.width / 2, b.bottom);
       }
@@ -1490,6 +1973,7 @@
         renderRisk(e.risk);
         if (state.status) { renderApprovals(state.status); renderArmed(state.status); }  // cartão de resultado na hora
         if (state.page === 'painel') refreshOrders();
+        if (e.order && state.chartData && e.order.asset === state.chartData.asset) refreshChart();  // marca de ENTRADA na hora
         if (['win', 'loss', 'empate'].indexOf(e.order && e.order.status) >= 0) refreshAccount();  // saldo mudou
       }
       else if (e.type === 'signal' || e.type === 'result') { if (state.page === 'painel') refreshTodaySoon(); }
@@ -1600,14 +2084,15 @@
       applyMarkers();
     });
     $('#show-backtest').addEventListener('change', function (e) { state.showBacktest = e.target.checked; applyMarkers(); });
-    $('#p-scope').addEventListener('change', function (e) {
-      if (e.target.id !== 'show-comparison') return;
-      state.showComparison = e.target.checked;
-      try { localStorage.setItem('botbene-comparacao', state.showComparison ? '1' : '0'); } catch (err) { /* sem armazenamento */ }
-      syncVisible();
-      renderToggles();
-      applyMarkers();
-      refreshToday();
+    $('#show-reading').checked = state.showReading;
+    $('#show-reading').addEventListener('change', function (e) {
+      state.showReading = e.target.checked;
+      try { localStorage.setItem('botbene-leitura', state.showReading ? '1' : '0'); } catch (err) { /* sem armazenamento */ }
+      if (state.chartData) renderChart(state.chartData);
+      renderLineLegend();
+      refreshReading();
+      var bars = candleSeries ? candleSeries.data().length : 0;  // a leitura tem um rótulo por padrão: de longe eles se atropelam
+      if (bars) mainChart.timeScale().setVisibleLogicalRange({ from: bars - (state.showReading ? READING_BARS : 90), to: bars + FOCUS_MARGIN_BARS });
     });
     bindSegmented('#e-period', 'ePeriod', refreshEntradas);
     bindSegmented('#d-period', 'dPeriod', refreshDesempenho);
@@ -1616,7 +2101,7 @@
 
     api('/api/strategies').then(function (list) {
       list.forEach(function (s) { LABELS[s.name] = s.label; });
-      var opts = '<option value="">Todos</option>' + list.map(function (s) {
+      var opts = '<option value="">Todas</option>' + list.map(function (s) {
         return '<option value="' + esc(s.name) + '">' + esc(s.label) + '</option>';
       }).join('');
       $('#e-strategy').innerHTML = opts;

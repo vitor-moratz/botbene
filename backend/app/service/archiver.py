@@ -1,4 +1,4 @@
-"""Guarda sozinho as velas de 1 min e de 5 s dos pares configurados na base de pesquisa.
+"""Guarda sozinho as velas de 1 min e de 5 s dos pares configurados e dos pares da pesquisa.
 
 A IQ só mantém velas de 5 s por ~1 semana; guardando a cada 6 horas, a pesquisa ganha dados novos
 toda semana (e o período que nenhum ajuste viu cresce para conferir as estratégias).
@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 from app.broker.base import Broker
 from app.db.database import Database
-from app.research.dataset import SUB_TF, download
+from app.research.dataset import RESEARCH_ASSETS, SUB_TF, download
 from app.service.config_store import ConfigStore
 
 log = logging.getLogger(__name__)
@@ -22,20 +22,25 @@ MAX_BACK = 8 * 86400  # até onde buscar quando o par ainda não tem nada guarda
 
 class ResearchArchiver:
     def __init__(self, db: Database, broker_provider: Callable[[], Broker], config: ConfigStore,
-                 interval: float = 6 * 3600, first_delay: float = 600) -> None:
+                 interval: float = 6 * 3600, first_delay: float = 600,
+                 extra_assets: tuple[str, ...] = RESEARCH_ASSETS) -> None:
         self.db = db
+        self.extra_assets = extra_assets
         self._broker = broker_provider
         self.config = config
         self.interval, self.first_delay = interval, first_delay
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
+    def assets(self) -> list[str]:
+        return list(dict.fromkeys([*self.config.get().assets, *self.extra_assets]))
+
     def run_once(self) -> int:
         broker = self._broker()
         now = int(broker.server_time())
         last = {(s["asset"], s["timeframe"]): s["last_ts"] for s in self.db.candle_series()}
         total = 0
-        for asset in self.config.get().assets:
+        for asset in self.assets():
             for tf in (60, SUB_TF):
                 since = max(now - MAX_BACK, last.get((asset, tf), 0) - tf)
                 try:

@@ -9,15 +9,18 @@ from app.ldp.engine import EngineStep, LdpEngine
 from app.market.candle import Candle
 from app.strategies.ldp_apostila import NAME as APOSTILA
 from app.strategies.ldp_apostila import LdpApostila, Plan
+from app.strategies.recipes import NAMES as RECIPE_NAMES
+from app.strategies.recipes import RETRACAO_LOTE, REVERSAO_FORCA, REVERSAO_INDECISAO, recipes
 from app.strategies.retracao_comando import NAME as RETRACAO
 from app.strategies.retracao_comando import RetracaoComando
 
-INTRA_NAMES = (RETRACAO, APOSTILA)
-SHORT_LABELS = {RETRACAO: "Retração no comando", APOSTILA: "Marcações"}
+INTRA_NAMES = (RETRACAO, APOSTILA, *RECIPE_NAMES)
+SHORT_LABELS = {RETRACAO: "Retração no comando", APOSTILA: "Marcações", RETRACAO_LOTE: "Retração no lote",
+                REVERSAO_FORCA: "Reversão A", REVERSAO_INDECISAO: "Reversão B"}
 
 
 def default_intra(timeframe: int = 60) -> list:
-    return [RetracaoComando(timeframe=timeframe), LdpApostila(timeframe=timeframe)]
+    return [RetracaoComando(timeframe=timeframe), LdpApostila(timeframe=timeframe), *recipes(timeframe)]
 
 
 def plan_all(strategies: Sequence, step: EngineStep, engine: LdpEngine) -> Plan:

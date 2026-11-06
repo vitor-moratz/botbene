@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.api.factory import create_app
 from app.config import Settings
+from app.strategies import default_strategies
 from tests.fakes import FakeBroker
 from tests.helpers import random_walk
 
@@ -30,7 +31,7 @@ def test_painel_e_api_de_ponta_a_ponta(tmp_path):
         assert "BotBene" in client.get("/").text
         assert client.get("/api/status").json()["status"] == "parado"
 
-        client.put("/api/config", json={"comparison": True})  # este teste confere também os scripts de comparação
+        client.app.state.bot._strategies_factory = default_strategies  # confere também o caminho de sinal no fechamento
         # o campo antigo `asset` (painel velho) é ignorado: valem os pares da Configuração
         r = client.post("/api/bot/start", json={"asset": "eurusd", "timeframe": 60})
         assert r.status_code == 200

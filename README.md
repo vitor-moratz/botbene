@@ -29,16 +29,20 @@ Depois é só abrir **BotBene** pela Área de Trabalho ou pelo Menu Iniciar. O a
 ## Painel
 
 - **Modos:** só sinais, aprovação, automático, ou automático com veto (entra sozinho, mas dá para cancelar; é o recomendado). Começa sempre na conta demo; a real se escolhe na barra lateral (veja os Avisos).
-- **Scripts de comparação** (LDP v1.3, regra das linhas, WIKI PRO, marcações): desligados por padrão; ligados, só registram o que teriam feito, nunca mandam ordem.
+- **Estratégias:** cada uma fica **Desligada**, **Observar** (anota e mede, sem ordem) ou **Operar** (pode mandar ordem). Uma ordem por par e vela: CALL e PUT juntos se anulam; no mesmo sentido, vale a de mais confluências.
+- **Scripts** (LDP v1.3, WIKI PRO): só ajuda visual no gráfico. Nunca decidem entrada e não entram nas estatísticas. A comparação deles fica na ferramenta de pesquisa.
 - **Pedidos de aprovação** (no topo de qualquer tela, com aviso sonoro): gráfico grande com 60 velas, vela de comando marcada, linhas do gatilho e da abertura, vela da entrada ao vivo; ao lado, contagem dos 15 s, preço agora e pips até o gatilho, valor, vencimento e o botão Aprovar. Vários pedidos viram abas. Aprovar antes do gatilho = a ordem sai no toque; depois do toque (ainda nos 15 s) = sai no preço do momento. Botão **Tela cheia** na barra lateral.
-- **Painel:** resultado, acerto e entradas de hoje (só ao vivo), gráfico com velas (escolha o par em "Ver o par"), linhas do v1.3, suporte/resistência e setas (liga/desliga por script), próxima entrada armada, **ordens na conta demo** com o placar da sessão, feed das entradas e leitura da última vela.
-- **Configuração:** login da IQ (com "Testar conexão"; a senha fica só em `data/config.json` e nunca volta para a tela), modo (os 4 acima), estratégias que operam, pares, vela, valor da entrada, stop win, stop loss, máximo de entradas, pausa por perdas seguidas e martingale com análise (o gale só vale para a próxima entrada válida e aprovada; até 2 níveis; o ciclo inteiro precisa caber no stop loss).
+- **Validação ao vivo** (no Painel): entradas ao vivo da estratégia principal rumo às 200, acerto com faixa de confiança, linha do empate e veredito (juntando amostra / no empate / vantagem comprovada / abaixo do empate).
+- **Vigia da conexão:** se a IQ para de responder, o horário dela para, a biblioteca avisa que caiu ou nenhum par aberto recebe preço novo, o bot fecha a conexão, abre outra, recarrega os pares e volta a rodar sozinho (aviso amarelo enquanto isso; "reconectou N×" depois). Chamadas à biblioteca que estouram o prazo têm a thread encerrada, porque ela espera em laços sem pausa. Em último caso, o servidor reinicia sozinho (`desktop/start_server.sh`) e retoma o bot com o placar da sessão; na conta real, ele não volta a operar sem alguém clicar em Iniciar.
+- **Gráficos:** botões **−** e **+** de zoom e foco no preço atual, no gráfico do Painel e no do pedido de aprovação.
+- **Painel:** resultado, acerto e entradas de hoje (só ao vivo), gráfico com velas (escolha o par em "Ver o par"), marca **ENTRADA CALL/PUT** com preço e resultado em cada ordem enviada, setas pequenas nas entradas só anotadas, linhas e setas dos scripts, suporte/resistência, próxima entrada armada, **ordens na conta demo** com o placar da sessão, feed das entradas e leitura da última vela.
+- **Configuração:** login da IQ (com "Testar conexão"; a senha fica só em `data/config.json` e nunca volta para a tela), modo (os 4 acima), estado de cada estratégia, ajuda visual no gráfico, pares, vela, valor da entrada, stop win, stop loss, máximo de entradas, pausa por perdas seguidas, payout mínimo, horário de operação e martingale com análise (o gale só vale para a próxima entrada válida e aprovada; até 2 níveis; o ciclo inteiro precisa caber no stop loss).
 - **Entradas:** todas as entradas por período (Hoje / 7 dias / Mês / Geral), com entrada, saída e resultado.
-- **Desempenho:** por período, resultado por hora/dia/mês, saldo acumulado, acerto por script com intervalo de confiança, por setup, por horário e OTC × normal.
+- **Desempenho:** por período, resultado por hora/dia/mês, saldo acumulado, acerto por estratégia com intervalo de confiança, por setup, por horário e OTC × normal.
 
 O backtest (as ~500 velas carregadas ao iniciar) fica como referência: nas telas, o padrão é sempre **ao vivo**.
 
-Sem o atalho, dá para rodar à mão: `cd ~/botbene/backend && .venv/bin/python -m uvicorn app.main:app --port 8000` e abrir http://127.0.0.1:8000.
+Sem o atalho, dá para rodar à mão: `cd ~/botbene/backend && .venv/bin/python -m uvicorn app.main:app --port 8000 --timeout-graceful-shutdown 5` e abrir http://127.0.0.1:8000.
 
 ## Avisos
 
@@ -116,4 +120,4 @@ A apostila tem direitos reservados: guarde o PDF em `docs/materiais/`. Essa past
 |---|---|
 | 2 | ✓ banco SQLite, API, painel, modo paper, backtest imediato, regra das linhas, gatilhos de dentro da vela (15 s), base de pesquisa com ajuste × conferência, retração no comando |
 | 3 | ✓ ordem na demo (testada de ponta a ponta), gestão de risco, modos de aprovação, automático e automático com veto, cartão grande com o trecho do gráfico, tela de configuração, vários pares ao mesmo tempo, seletor Demo/Real com travas, arquivo automático de velas para a pesquisa, martingale com análise (desligado por padrão) |
-| 4 | Pausa automática por desempenho, ranking de setups; conta REAL só com liberação manual |
+| 4 | ✓ vigia da conexão com reconexão e reinício automáticos, placar de validação ao vivo, payout mínimo, horário de operação · a fazer: pausa automática por desempenho, ranking de setups; conta REAL só com liberação manual |

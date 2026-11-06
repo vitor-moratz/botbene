@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import threading
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,6 +21,7 @@ from app.research.dataset import research_db
 from app.service.archiver import ResearchArchiver
 from app.service.config_store import ConfigStore
 from app.service.events import EventHub
+from app.service.guard import ProcessGuard
 from app.service.resolver import PendingResolver
 
 FRONTEND_DIR = BACKEND_DIR.parent / "frontend"
@@ -39,6 +42,7 @@ def create_app(
     frontend_dir: Path = FRONTEND_DIR,
     allow_shutdown: bool = True,
     start_resolver: bool = True,
+    hard_exit: bool = False,
 ) -> FastAPI:
     settings = settings or get_settings()
     db = db or Database(settings.db_url())
@@ -47,17 +51,33 @@ def create_app(
     bot = BotService(settings, db, hub, broker_factory or iq_broker_factory(settings, config), config=config)
     resolver = PendingResolver(db, bot.shared_broker, hub)
     archiver = ResearchArchiver(research_db(settings), bot.shared_broker, config)
+    guard = ProcessGuard(bot, settings.resolved_data_dir())
+    supervised = os.environ.get("BOTBENE_SUPERVISED") == "1"
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         hub.bind_loop(asyncio.get_running_loop())
+        orphans = db.close_orphan_orders()
+        if orphans:
+            log.warning("%d ordem(ns) ficaram sem resultado porque o servidor parou", orphans)
         if start_resolver:
             resolver.start()
             archiver.start()
+        if supervised:
+            info = guard.take_resume()
+            if info:
+                log.warning("Retomando o bot depois de reiniciar o servidor: %s", info.get("why"))
+                bot.resume(info)
+            guard.start()
         yield
+        guard.stop()
         resolver.stop()
         archiver.stop()
         bot.stop(wait=5)
+        if hard_exit:
+            # Threads presas da biblioteca podem segurar o fim do Python para sempre (servidor fantasma).
+            log.info("Servidor encerrado")
+            threading.Timer(1.0, os._exit, args=(0,)).start()
 
     app = FastAPI(title="BotBene", version="0.3.0", lifespan=lifespan)
     app.state.bot, app.state.db, app.state.hub, app.state.config = bot, db, hub, config

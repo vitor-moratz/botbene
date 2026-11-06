@@ -45,9 +45,63 @@ def test_sem_login_na_tela_vale_o_env(tmp_path):
     assert store.credentials() == ("tela@b.com", "x")
 
 
+def test_email_novo_sem_senha_e_recusado_e_nao_muda_nada(tmp_path):
+    with make_client(tmp_path) as client:
+        client.put("/api/config", json={"iq_email": "vitor@b.com", "iq_password": "senha-do-vitor"})
+        r = client.put("/api/config", json={"iq_email": "bene@b.com", "iq_password": ""})
+        assert r.status_code == 422 and "senha" in r.json()["detail"]
+        assert client.get("/api/config").json()["iq_email"] == "vitor@b.com"
+        # o mesmo e-mail (o formulário sempre manda) continua aceitando senha vazia
+        assert client.put("/api/config", json={"iq_email": " VITOR@b.com", "stake": 5}).status_code == 200
+        assert client.put("/api/config", json={"iq_email": "bene@b.com", "iq_password": "senha-do-bene"}).status_code == 200
+    saved = json.loads((tmp_path / "config.json").read_text())
+    assert saved["iq_email"] == "bene@b.com" and saved["iq_password"] == "senha-do-bene"
+
+
+def test_login_do_env_nao_e_email_novo(tmp_path):
+    store = ConfigStore(tmp_path / "config.json", "env@b.com", "envpass")
+    store.update({"iq_email": "env@b.com", "stake": 5})  # o formulário mostra e manda o e-mail do .env
+    assert store.credentials() == ("env@b.com", "envpass")
+
+
+def test_config_antiga_vira_os_estados_novos_sem_perder_o_login(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"iq_email": "a@b.com", "iq_password": "x", "comparison": True,
+                                "order_strategies": ["retracao_comando", "ldp_v13"], "stake": 7}))
+    store = ConfigStore(path)
+    cfg = store.get()
+    assert cfg.strategies == {"retracao_comando": "operate"}  # script não é estratégia: fica de fora
+    assert cfg.operating == ["retracao_comando"] and cfg.stake == 7 and store.credentials() == ("a@b.com", "x")
+    store.update({"stake": 8})  # ao salvar, o arquivo passa a ter só os campos novos
+    saved = json.loads(path.read_text())
+    assert saved["strategies"] == {"retracao_comando": "operate"}
+    assert "comparison" not in saved and "order_strategies" not in saved
+
+
+def test_config_antiga_sem_ninguem_operando_nao_liga_nada(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"order_strategies": []}))
+    assert ConfigStore(path).get().running == []
+
+
+def test_estados_e_scripts_pela_tela(tmp_path):
+    with make_client(tmp_path) as client:
+        body = client.get("/api/config").json()
+        assert body["strategies"] == {"retracao_comando": "operate"}
+        assert body["strategy_names"] == ["retracao_comando", "ldp_apostila", "retracao_lote", "reversao_forca", "reversao_indecisao"]
+        assert body["chart_scripts"] == {"ldp_lines": True, "ldp_arrows": True, "wiki_pro": False}
+        r = client.put("/api/config", json={"strategies": {"retracao_comando": "observe", "ldp_apostila": "off"},
+                                            "chart_scripts": {"ldp_arrows": False}})
+        assert r.status_code == 200
+        assert r.json()["strategies"] == {"retracao_comando": "observe", "ldp_apostila": "off"}
+        assert r.json()["chart_scripts"] == {"ldp_lines": True, "ldp_arrows": False, "wiki_pro": False}
+        assert client.put("/api/config", json={"strategies": {"ldp_v13": "operate"}}).status_code == 422  # script não é estratégia
+        assert client.put("/api/config", json={"strategies": {"retracao_comando": "talvez"}}).status_code == 422
+        assert client.put("/api/config", json={"chart_scripts": {"outro": True}}).status_code == 422
+
+
 def test_validacao(tmp_path):
     with make_client(tmp_path) as client:
-        assert client.put("/api/config", json={"order_strategies": ["ldp_v13"]}).status_code == 422
         assert client.put("/api/config", json={"assets": ["EUR USD;"]}).status_code == 422
         assert client.put("/api/config", json={"stake": 0.5}).status_code == 422
         r = client.put("/api/config", json={"assets": ["eurusd-OP", "gbpusd-op", "EURUSD-op", "eurusd-otc"]})

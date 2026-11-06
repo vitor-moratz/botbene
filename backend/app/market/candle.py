@@ -16,6 +16,10 @@ def valid_asset(name: str) -> bool:
     return 3 <= len(name) <= 20 and all(ch.isalnum() or ch == "-" for ch in name)
 
 
+def is_otc(asset: str) -> bool:
+    return asset.upper().endswith("-OTC")
+
+
 @dataclass(frozen=True, slots=True)
 class Candle:
     """Uma vela OHLC. `ts` é o início da vela em segundos (epoch UTC)."""

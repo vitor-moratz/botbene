@@ -8,10 +8,14 @@
 | Estratégia | Papel no bot | Quando entra | Acerto em dados que ela nunca viu |
 |---|---|---|---|
 | **Apostila · retração no comando** | **Principal.** Mostra o pedido no painel e manda a ordem (no modo recomendado, sozinha, com direito a veto) | Dentro da vela seguinte ao comando, nos primeiros 15 s | **~54%** (440 entradas) · empate 54,3% |
-| Apostila · marcações | Comparação: só registra, não manda ordem | Dentro da vela, nos primeiros 15 s | 48% (562) |
-| LDP v1.3 (script da IQ) | Comparação | Abertura da vela seguinte ao sinal | 49,1% (97 mil) |
-| LDP v1.3 + regra das linhas | Comparação | Abertura da vela seguinte | 48,8% (64 mil) |
-| WIKI PRO V2.1 (script da IQ) | Comparação | Abertura da vela seguinte | 49,3% (56 mil) |
+| Apostila · marcações | Desligada por padrão; pode observar ou operar, mas não é recomendada | Dentro da vela, nos primeiros 15 s | 48% (562) |
+| LDP v1.3 (script da IQ) | Script: só desenho no gráfico | No bot, não entra | 49,1% (97 mil) |
+| LDP v1.3 + regra das linhas | Só na ferramenta de pesquisa | No bot, não entra | 48,8% (64 mil) |
+| WIKI PRO V2.1 (script da IQ) | Script: só desenho no gráfico | No bot, não entra | 49,3% (56 mil) |
+
+Na pesquisa, os três últimos entram na abertura da vela seguinte ao sinal.
+
+**Estratégia não é script.** Script é ajuda visual. Estratégia é a receita que junta contexto, padrões e gatilho, decide a entrada e é medida.
 
 Termos usados aqui:
 - **M1**: velas de 1 minuto. O bot só opera M1.
@@ -73,8 +77,10 @@ Na tela **Configuração**:
   - **Aprovação:** cada entrada aparece na tela e só vai para a conta demo se você aprovar.
   - **Automático:** o bot entra sozinho na conta demo, sem perguntar e sem cartão na tela. Bom para deixar rodando e juntar resultado.
   - **Automático com veto:** entra sozinho, mas o cartão aparece com bipe já aprovado. Se você não fizer nada, a ordem sai no gatilho; se clicar em "Cancelar esta entrada", não sai.
-- **Estratégias que operam:** só **retração no comando**.
-- **Scripts de comparação:** desligados por padrão. Ligados, o bot também anota o que o LDP v1.3, a regra das linhas, o WIKI PRO e as marcações teriam feito. Eles nunca mandam ordem e servem só para comparar no Desempenho.
+- **Estratégias:** cada uma fica em **Desligada**, **Observar** (anota e mede, sem mandar ordem) ou **Operar** (pode mandar ordem, conforme o modo). Deixe só a **retração no comando** em Operar.
+  - Uma ordem por par e vela: CALL e PUT juntos se anulam; no mesmo sentido, vale a de mais confluências.
+  - Ligar ou desligar vale no próximo início do bot; trocar entre Observar e Operar vale na hora.
+- **Ajuda visual no gráfico:** linhas e setas do LDP v1.3 e setas do WIKI PRO. Só desenham: nunca decidem entrada e não entram nas estatísticas.
 - **Pares:** os `-op`, até 8. Hoje são EURUSD, GBPUSD, USDJPY, AUDUSD, EURJPY e EURGBP.
 - **Gestão de risco:**
   - valor da entrada (US$ 2 na demo);
@@ -160,11 +166,11 @@ O que cada estado quer dizer:
 
 ### 6. Quando reavaliar
 
-Com 10 ou 30 entradas o resultado é sorte, para o bem ou para o mal: há dias de 40% e dias de 66% com a mesma regra. Reavalie com **~200 entradas da retração no comando**. Nos números de cima do Painel, conte só ela; os scripts de comparação ficam separados.
+Com 10 ou 30 entradas o resultado é sorte, para o bem ou para o mal: há dias de 40% e dias de 66% com a mesma regra. Reavalie com **~200 entradas da retração no comando**. Os números de cima do Painel contam só as estratégias em Operar; as que só observam aparecem separadas no placar.
 
-## C. Estratégias de comparação (não mandam ordem)
+## C. As outras regras
 
-Elas só rodam se a opção **"Rodar também os scripts de comparação"** estiver ligada na Configuração (vem desligada). Aí ficam no placar do Painel e na tela Desempenho, marcadas como "comparação".
+A estratégia de marcações roda se você a colocar em Observar ou Operar. O LDP v1.3 e o WIKI PRO são scripts: no bot, só desenham no gráfico. As regras e os números deles abaixo vêm da ferramenta de pesquisa (`python -m app.tools.research`), que continua medindo os scripts para comparação.
 
 ### Apostila · marcações
 
@@ -273,6 +279,65 @@ Corpo menor que 5% da amplitude = doji (sem cor). Também ficam registrados GAP 
 | Nano-lote | X X Y X (uma vela de cor diferente no meio do fluxo) | corpo da vela Y | 126, 130 |
 | Defesa | X Y Y (reversão confirmada) | corpo do 1º candle da reversão (+50% se for vela de força) | 149-152 |
 
+## 2b. Leitura do estudo (`backend/app/ldp/reading.py`)
+
+Camada que lê o gráfico como as análises das págs. 162-220: **"Identifique um lote passado. Dentro desse lote localize e marque a nova alta / nova baixa + nova posição."** Só lê: nenhuma estratégia usa isto ainda. Aparece no Painel em **mostrar a leitura do estudo**.
+
+| Peça | Regra | Páginas |
+|---|---|---|
+| Lote | Velas da mesma cor. Abre por reversão, comando ou depois de um fechamento de preço. Fecha por reversão confirmada, fim de taxa ou rompimento | 121-123 |
+| Rompimento do lote | O **corpo** passa da abertura da vela que abriu o lote | 115, 123 |
+| Nano-lote | Uma vela de outra cor seguida da cor do lote. **Não fecha o lote** | 126, 133, 182 |
+| Nova alta/baixa | 1º pavio depois de o corpo fechar além da máxima/mínima anterior ao lote | 97, 102, 129 |
+| Nova posição | A vela seguinte, na mesma cor | 113, 115, 129 |
+| Região central | Do pavio da nova alta/baixa até a projeção da nova posição; sem projeção, a abertura dela | 102, 129-130, 164 |
+| Indecisão (dupla, tripla, futuro) | O **corpo inteiro** dentro do pavio anterior. A região fica sem lado até um corpo romper; depois, ganha o lado de quem rompeu | 106-112 |
+| Vela de força | Pavio na abertura, corpo de impulso. Região no corpo: rompeu, terminou dentro ou retraiu nela | 11-16, 69-70, 138 |
+| Defesa | Corpo do 1º candle da reversão, depois de confirmada | 149-152 |
+| Vela de força na defesa | Vela de força que chega numa região contrária e fecha nela, sem romper: primeiro registro, nova posição, comando, taxa dividida etc. A leitura vira para o outro lado. Só rótulo, ainda sem entrada | 153, 211, 218 |
+| Transferência / desinstalação | Pavio alinhado com um pavio recente, sem nada passar entre eles: mesma cor / cor diferente | 134-135 |
+| Cenário | Topos e fundos (o melhor), tendência (fluxo) ou consolidado (não operar) | 223 |
+
+**Regiões em uso:** só as dos 2 lotes mais recentes de cada lado. Em cada lote, a região central e as de indecisão sempre ficam; das outras (comando, taxa dividida, nano-lote), só as 2 mais recentes. Máximo de 12 ao mesmo tempo. Uma região sai quando um corpo fecha além dela (pág. 115).
+
+**Por que isso importa.** No mapa antigo (seção 3), 67% das velas "travavam" em alguma marcação, então travar não dizia nada. Contando só frequência nos 12 pares `-op` (~115 mil velas), sem olhar resultado, a leitura nova dá: trava em qualquer região 26,5%; trava na região de nova alta/baixa + nova posição 4,7%; trava em região de dupla/tripla 6,1%. Indecisão caiu de ~24% para ~12% das velas, e o cenário ficou em 65% topos e fundos, 32% consolidado e 3% tendência.
+
+**Ainda a confirmar com o dono do estudo, no gráfico:** a definição numérica do macro-lote (págs. 124, 128) não entrou nesta versão; os números do cenário e a tolerância de alinhamento são valores iniciais.
+
+## 2c. Estratégias da leitura do estudo (`backend/app/strategies/recipes.py`)
+
+**Regras congeladas em 06/11/2026, antes de qualquer medição.** Daqui em diante, nenhum número delas muda olhando o resultado; uma versão nova vira outra estratégia, com outro nome. Todas armam no fechamento da vela e entram na vela seguinte se o preço tocar a marcação nos primeiros 15 s (pág. 162), com vencimento no fim dela. Abertura em GAP aborta (pág. 28).
+
+**Vela de força** (para as três): pavio na abertura, corpo ≥ 50% da amplitude e amplitude ≥ 1,2 × a média das 14 velas anteriores (pág. 11-16). **Travou:** fechou a até 0,15 ATR da borda da região, sem passar dela.
+
+| Estratégia | Arma quando | Marcação e sentido | Exige |
+|---|---|---|---|
+| **Retração no lote** (pág. 162-172) | Existe uma região de nova alta/baixa **+ nova posição** do lado certo, a até 0,6 ATR do fechamento | Borda de cima da região de compra (CALL) ou de baixo da de venda (PUT) | Nada além da região; confluências são anotadas para medir |
+| **Reversão A · força trava** (pág. 30, 44, 153, 197, 218) | Uma vela de força fechou travada numa região contrária ativa (primeiro registro, comando, taxa dividida, indecisão etc.) | Borda que ela tocou; entra **contra** a vela de força | 2 confluências |
+| **Reversão B · força rompe indecisão** (pág. 106-119) | Uma dupla/tripla posição ou futuro foi rompida pelo corpo de uma vela de força ou de um comando, há até 5 velas, e o preço está a até 0,6 ATR da região | Borda da região do lado de quem rompeu; entra **a favor** de quem rompeu | 2 confluências |
+
+**Confluências** (1 ponto cada, contando as regiões ativas a até 0,15 ATR da marcação, do lado da entrada):
+1. marcação de comando ou de taxa dividida (pág. 26, 41);
+2. dupla/tripla posição ou futuro (pág. 110, 112);
+3. primeiro registro + nova posição (pág. 102, 162);
+4. duas ou mais marcações juntas;
+5. espaço até a próxima barreira contrária ≥ 0,8 ATR (pág. 177, 199, 201).
+
+**Como medir** (plano, Etapa 3): payout de 84%, empate 54,3%. Primeira olhada nos dados até 03/11/2026; **confirmação** de 04/11 em diante, que nenhuma regra viu. Só a confirmação decide. O cenário (pág. 223), o horário e cada confluência são anotados para análise, sem virar filtro antes de passar pela confirmação.
+
+**Resultado (medido em 06/11/2026, 12 pares `-op`, velas de 5 s de 26/10 a 06/11):**
+
+| Estratégia | Primeira olhada (até 03/11) | Confirmação (04 a 06/11) |
+|---|---|---|
+| Retração no lote | 50,8% (9.119) | 51,0% (4.089) |
+| Reversão A · força trava | 51,0% (2.171) | 51,1% (960) |
+| Reversão B · força rompe indecisão | 49,3% (2.094) | 52,6% (871) |
+| *Retração no comando (referência)* | *56,5% (742)*¹ | *53,9% (243)* |
+
+¹ Inclui os dias usados para escolher a regra em 03/11, então não é uma olhada limpa.
+
+**Conclusão:** as três, como foram escritas, **ficam abaixo do empate nos dois períodos** e não devem operar. Mais confluências não melhoraram o acerto. Os grupos que pareceram bons num período não se repetiram no outro: espaço na reversão A deu 54,1% na primeira olhada e 50,3% na confirmação; primeiro registro na reversão B deu 48,5% e depois 58,2%. Isso é oscilação, não vantagem. Elas também entram demais (a retração no lote, ~95 entradas por par por dia), o que mostra que a leitura automática ainda não é seletiva como a do estudo. Antes de qualquer versão nova, a leitura precisa ser conferida no gráfico por quem opera o estudo.
+
 ## 3. Mapa de níveis (`backend/app/ldp/levels.py`)
 
 - **Papel pela posição:** marcação abaixo do fechamento é suporte, acima é resistência.
@@ -359,5 +424,8 @@ O que isso mostra:
 ## 8. Ainda não implementado (próximas fases)
 
 - Cenário (topos e fundos / tendência / consolidação) e macro-lote como filtros medidos na pesquisa.
-- Bot olhando vários pares ao mesmo tempo (a retração no comando dá poucas entradas por par).
 - Transferência de preço e desinstalação (pág. 134-135) — a definir com exemplos reais.
+- Filtro candidato "comando que não rompeu a máxima/mínima das 10 velas anteriores" (69% / 63% com ~50 entradas cada): testar em semanas novas de dados.
+- Pausa automática por desempenho.
+
+(Já feito: vários pares ao mesmo tempo; placar de validação ao vivo no Painel, com a meta de 200 entradas; payout mínimo e horário de operação.)

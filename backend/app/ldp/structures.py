@@ -149,21 +149,24 @@ def td_topo_fundo(a: CandleInfo, b: CandleInfo, candles: Sequence[Candle], cfg: 
     return [Structure(f"{prefix}_n2", b.index, a.index, direction, marks, 53)]
 
 
-def indecisao(a: CandleInfo, b: CandleInfo) -> list[Structure]:
-    """Indecisão / dupla posição: o corpo da vela atual fecha dentro do pavio da anterior (pág. 106-110).
+def indecisao(a: CandleInfo, b: CandleInfo, wick_tol_pct: float = 0.02) -> list[Structure]:
+    """Indecisão / dupla posição: o CORPO da vela atual fecha dentro do pavio da anterior (pág. 106-110).
 
+    Precisa ser o corpo inteiro (figura da pág. 106), não só o fechamento. A tolerância cobre o corpo
+    que nasce colado no fechamento anterior.
     Se a vela atual ainda deixa um pavio além do da anterior, é futuro de alta/baixa (pág. 108).
     Marcações: os pavios + o fracionamento (pág. 110).
     """
     ca, cb = a.candle, b.candle
-    if a.has_upper_wick and ca.body_top < cb.close <= ca.high:
+    tol = ca.range * wick_tol_pct
+    if a.has_upper_wick and cb.body_bottom >= ca.body_top - tol and ca.body_top < cb.close <= ca.high:
         futuro = b.has_upper_wick and cb.high > ca.high
         marks_l = [Mark(ca.high, "pavio", 2), Mark(ca.body_top, "fracionamento", 2)]
         if b.has_upper_wick and cb.high != ca.high:
             marks_l.append(Mark(cb.high, "pavio", 2))
         name = "futuro_alta" if futuro else "dupla_posicao"
         return [Structure(name, b.index, a.index, 0, tuple(marks_l), 108 if futuro else 109, "superior")]
-    if a.has_lower_wick and ca.low <= cb.close < ca.body_bottom:
+    if a.has_lower_wick and cb.body_top <= ca.body_bottom + tol and ca.low <= cb.close < ca.body_bottom:
         futuro = b.has_lower_wick and cb.low < ca.low
         marks_l = [Mark(ca.low, "pavio", 2), Mark(ca.body_bottom, "fracionamento", 2)]
         if b.has_lower_wick and cb.low != ca.low:

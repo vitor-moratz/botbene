@@ -94,6 +94,10 @@ class Broker(ABC):
         """Dá para comprar binária de 1 min neste ativo agora? Nunca espera pela corretora."""
         return True, "ok"
 
+    def payout_now(self, asset: str) -> float | None:
+        """Payout atual da binária de 1 min, do que já está em memória (nunca espera). None = não sabe."""
+        return None
+
     def buy(self, asset: str, direction: str, amount: float, minutes: int = 1) -> OrderTicket:
         """Envia uma ordem binária (turbo). Levanta BrokerError se a corretora recusar."""
         raise BrokerError("Esta corretora não envia ordens")

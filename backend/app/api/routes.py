@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import signal as os_signal
 import threading
@@ -11,10 +12,12 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.analytics.stats import breakeven, summarize, total
 from app.analytics.timeline import BRT, GRANULARITY, cumulative, period_start, timeline
-from app.market.candle import normalize_asset, valid_asset
+from app.analytics.validation import summarize_validation
+from app.market.candle import is_otc, normalize_asset, valid_asset
 from app.service.bot import BotBusyError, BotService
 from app.strategies import STRATEGY_LABELS, STRATEGY_ORDER
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 Period = Literal["hoje", "7d", "mes", "geral"]
 
@@ -56,8 +59,8 @@ class ConfigPatch(BaseModel):
     iq_email: str | None = Field(None, max_length=200)
     iq_password: str | None = Field(None, max_length=200)
     mode: Literal["sinais", "aprovacao", "automatico", "automatico_veto"] | None = None
-    order_strategies: list[str] | None = None
-    comparison: bool | None = None
+    strategies: dict[str, Literal["off", "observe", "operate"]] | None = None
+    chart_scripts: dict[str, bool] | None = None
     stake: float | None = None
     stop_win: float | None = None
     stop_loss: float | None = None
@@ -65,6 +68,9 @@ class ConfigPatch(BaseModel):
     max_consecutive_losses: int | None = None
     martingale: bool | None = None
     gale_levels: int | None = None
+    min_payout: float | None = None
+    hours_start: str | None = None
+    hours_end: str | None = None
     assets: list[str] | None = None
     timeframe: Literal[60, 120, 300] | None = None
 
@@ -166,6 +172,8 @@ def put_config(body: ConfigPatch, request: Request) -> dict:
     except ValidationError as exc:
         msg = "; ".join(e["msg"].removeprefix("Value error, ") for e in exc.errors())
         raise HTTPException(status_code=422, detail=msg) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     bot = _bot(request)
     if store.credentials() != old_creds:
         bot.invalidate_broker()
@@ -180,6 +188,7 @@ def test_config(request: Request) -> dict:
     try:
         return _bot(request).test_connection()
     except Exception as exc:  # noqa: BLE001 - qualquer falha de login vira mensagem na tela
+        log.warning("Testar conexão falhou: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc) or type(exc).__name__) from exc
 
 
@@ -205,6 +214,11 @@ def chart(request: Request, limit: int = Query(240, ge=50, le=1500), asset: str 
     return _bot(request).chart(limit, normalize_asset(asset) if asset else None)
 
 
+@router.get("/reading")
+def reading(request: Request, limit: int = Query(240, ge=50, le=1500), asset: str | None = None) -> dict:
+    return _bot(request).reading_view(limit, normalize_asset(asset) if asset else None)
+
+
 @router.get("/strategies")
 def strategies() -> list[dict]:
     return [{"name": name, "label": STRATEGY_LABELS.get(name, name)} for name in STRATEGY_ORDER]
@@ -223,6 +237,25 @@ def signals(
     return request.app.state.db.list_signals(
         limit=limit, strategy=_strategies(strategy), origin=origin, result=result, asset=asset, since_ts=period_start(period)
     )
+
+
+@router.get("/validation")
+def validation(request: Request) -> dict:
+    """Placar de validação ao vivo das estratégias que operam; sem nenhuma operando, das que só observam.
+    OTC fica de fora: é outro mercado, com estatística separada, e a pesquisa não cobriu."""
+    db = request.app.state.db
+    cfg = request.app.state.config.get()
+    names = [n for n in STRATEGY_ORDER if n in (cfg.operating or cfg.running)]
+    orders = [o for o in db.list_orders(limit=100_000) if not is_otc(o["asset"])]
+    default_payout = request.app.state.bot.settings.default_payout
+
+    def signals(name: str) -> list[dict]:
+        return [s for s in db.resolved_signals(origin="ao_vivo", strategy=name) if not s["is_otc"]]
+
+    return {"strategies": [
+        summarize_validation(name, STRATEGY_LABELS.get(name, name), signals(name), orders, default_payout)
+        for name in names
+    ]}
 
 
 def _hour_brt(ts: int) -> str:

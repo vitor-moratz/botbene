@@ -8,14 +8,15 @@ from app.risk import RiskConfig
 from app.service.bot import BotService
 from app.service.events import EventHub
 from app.service.orders import OrderManager
-from app.strategies import REGISTRY
+from app.strategies import REGISTRY, default_strategies
 from app.strategies.base import Direction
 from app.strategies.ldp_apostila import ArmedSetup
 from tests.fakes import FakeBroker
 from tests.helpers import random_walk
 
 
-def make_bot(tmp_path, n_live=60, assets=("EURUSD",), comparison=True):
+def make_bot(tmp_path, n_live=60, assets=("EURUSD",), closing=True, strategies=None):
+    """`closing`: liga o caminho de sinal no fechamento (em produção nada roda nele)."""
     candles = random_walk(500 + n_live, seed=21)
     history, live = candles[:500], candles[500:]
     settings = Settings(_env_file=None, data_dir=tmp_path, history_candles=500)
@@ -23,20 +24,83 @@ def make_bot(tmp_path, n_live=60, assets=("EURUSD",), comparison=True):
     broker = FakeBroker(history, live)
     hub = EventHub()
     orders = OrderManager(db, hub, lambda: broker, sleep=lambda s: None, now=broker.server_time, threaded=False)
-    bot = BotService(settings, db, hub, lambda: broker, orders=orders)
-    bot.config.update({"comparison": comparison})
+    bot = BotService(settings, db, hub, lambda: broker, orders=orders, strategies_factory=default_strategies if closing else list)
+    if strategies is None and closing:
+        strategies = {"retracao_comando": "operate", "ldp_apostila": "observe"}
+    if strategies is not None:
+        bot.config.update({"strategies": strategies})
     bot.configure(list(assets), 60)
     return bot, broker, db, {c.ts: c for c in candles}
 
 
-def test_sem_scripts_de_comparacao_so_a_principal_registra(tmp_path):
-    bot, broker, db, _ = make_bot(tmp_path, comparison=False)
+def test_scripts_nao_geram_sinais_e_so_a_estrategia_ligada_registra(tmp_path):
+    bot, broker, db, _ = make_bot(tmp_path, closing=False)
     bot._bootstrap(broker)
     for _ in range(60):
         bot._poll(broker)
     assert {s["strategy"] for s in db.list_signals(limit=5000)} <= {"retracao_comando"}
     assert bot.snapshot()["active_strategies"] == ["retracao_comando"]
     assert bot.runner().strategies == [] and [s.name for s in bot.runner().intra] == ["retracao_comando"]
+
+
+def test_tudo_desligado_nada_roda(tmp_path):
+    bot, broker, db, _ = make_bot(tmp_path, closing=False, strategies={"retracao_comando": "off", "ldp_apostila": "off"})
+    bot._bootstrap(broker)
+    for _ in range(20):
+        bot._poll(broker)
+    assert bot.snapshot()["active_strategies"] == [] and bot.runner().intra == []
+    assert db.list_signals(limit=5000) == [] and bot.runner().armed == []
+
+
+def test_observar_anota_mas_nunca_abre_pedido(tmp_path):
+    bot, broker, _, _ = make_bot(tmp_path, n_live=3, closing=False, strategies={"retracao_comando": "observe"})
+    bot._bootstrap(broker)
+    bot.mode = "automatico"
+    assert [s.name for s in bot.runner().intra] == ["retracao_comando"] and bot.order_strategies == set()
+    nxt = broker.live[0]
+    r = bot.runner()
+    assert bot._open_approvals(r, [armed_for(bot, nxt, nxt.low, strategy="retracao_comando")], now=nxt.ts - 1) == []
+
+
+def test_operar_ou_observar_muda_na_hora_e_ligar_so_no_proximo_inicio(tmp_path):
+    bot, _, _, _ = make_bot(tmp_path, closing=False, strategies={"retracao_comando": "observe"})
+    cfg = bot.config.update({"strategies": {"retracao_comando": "operate", "ldp_apostila": "observe"}})
+    bot.apply_config(cfg)
+    assert bot.order_strategies == {"retracao_comando"}  # na hora
+    assert [s.name for s in bot._intra_for(60)] == ["retracao_comando"]  # marcações só no próximo início
+    bot.configure(["EURUSD"], 60)
+    assert [s.name for s in bot._intra_for(60)] == ["retracao_comando", "ldp_apostila"]
+
+
+def two_operating(tmp_path):
+    bot, broker, _, _ = make_bot(tmp_path, n_live=3, closing=False,
+                                 strategies={"retracao_comando": "operate", "ldp_apostila": "operate"})
+    bot._bootstrap(broker)
+    bot.mode = "automatico"
+    return bot, broker.live[0], bot.runner()
+
+
+def test_call_e_put_juntos_nao_viram_ordem(tmp_path):
+    bot, nxt, r = two_operating(tmp_path)
+    call = armed_for(bot, nxt, nxt.low, strategy="retracao_comando")
+    put = armed_for(bot, nxt, nxt.high, strategy="ldp_apostila", direction=Direction.PUT)
+    assert bot._open_approvals(r, [call, put], now=nxt.ts - 1) == []
+    assert bot.snapshot()["armed_log"][0]["outcome"] == "sem ordem: CALL e PUT ao mesmo tempo"
+
+
+def test_no_mesmo_sentido_vale_a_de_mais_confluencias(tmp_path):
+    bot, nxt, r = two_operating(tmp_path)
+    fraca = armed_for(bot, nxt, nxt.low, strategy="retracao_comando")
+    forte = armed_for(bot, nxt, nxt.low, strategy="ldp_apostila")
+    forte.confluences = {"gatilho": True, "forca": True}
+    [ap] = bot._open_approvals(r, [fraca, forte], now=nxt.ts - 1)
+    assert ap["strategy"] == "ldp_apostila"
+
+
+def test_uma_ordem_por_par_e_vela_mesmo_abrindo_de_novo(tmp_path):
+    bot, nxt, r = two_operating(tmp_path)
+    assert len(bot._open_approvals(r, [armed_for(bot, nxt, nxt.low, strategy="retracao_comando")], now=nxt.ts - 1)) == 1
+    assert bot._open_approvals(r, [armed_for(bot, nxt, nxt.low, strategy="ldp_apostila")], now=nxt.ts - 1) == []
 
 
 def test_backtest_no_historico_avalia_com_a_vela_seguinte(tmp_path):
@@ -103,10 +167,10 @@ def test_varios_pares_ao_mesmo_tempo(tmp_path):
     assert bot.snapshot()["asset"] == "GBPUSD" and bot.chart(100)["asset"] == "GBPUSD"
 
 
-def armed_for(bot, candle, level, strategy="ldp_apostila"):
+def armed_for(bot, candle, level, strategy="ldp_apostila", direction=Direction.CALL):
     r = bot.runner()
     prev = r.store.closed[-1]
-    return ArmedSetup(direction=Direction.CALL, trigger="retracao", level_price=level, level_strength=3,
+    return ArmedSetup(direction=direction, trigger="retracao", level_price=level, level_strength=3,
                       level_sources=["comando_unico:50%"], decision_index=len(r.store.closed) - 1, decision_ts=prev.ts,
                       target_ts=candle.ts, window_seconds=15, touch_tol=0.0, prev_close=prev.close, prev_range=prev.range,
                       gap_tol_pct=10.0, confluences={"gatilho": True}, strategy=strategy)
@@ -259,5 +323,5 @@ def test_snapshot_e_grafico(tmp_path):
     assert snap["reading"]["classe"] and snap["risk"]["can_trade"]
     chart = bot.chart(300)
     assert len(chart["candles"]) == 300
-    assert len(chart["buy_line"]) == 300
+    assert len(chart["buy_line"]) == 300 + (1 if chart["forming"] else 0)  # a vela em formação já mostra a linha
     assert all(m["time"] >= chart["candles"][0]["time"] for m in chart["markers"])
