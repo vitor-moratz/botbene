@@ -5,6 +5,7 @@ from app.strategies.ldp_v13 import LdpV13
 from app.strategies.ldp_v13_linhas import LdpV13Linhas
 from app.strategies.recipes import RETRACAO_LOTE, REVERSAO_FORCA, REVERSAO_INDECISAO
 from app.strategies.retracao_comando import NAME as RETRACAO_NAME
+from app.strategies.score import NAME as SCORE_NAME
 from app.strategies.wiki_pro_v21 import WikiProV21
 
 # Scripts que dão sinal no FECHAMENTO da vela (entrada na abertura da seguinte).
@@ -17,7 +18,7 @@ REGISTRY: dict[str, type[Strategy]] = {
 # Ordem fixa de todos os scripts no painel (a cor segue o script, nunca a posição).
 # As duas da apostila entram DENTRO da vela (gatilho de 15 s) e são tratadas à parte pelo bot.
 STRATEGY_ORDER: list[str] = [LdpV13.name, LdpV13Linhas.name, WikiProV21.name, APOSTILA_NAME, RETRACAO_NAME,
-                              RETRACAO_LOTE, REVERSAO_FORCA, REVERSAO_INDECISAO]
+                              RETRACAO_LOTE, REVERSAO_FORCA, REVERSAO_INDECISAO, SCORE_NAME]
 
 STRATEGY_LABELS: dict[str, str] = {
     LdpV13.name: "LDP v1.3",
@@ -28,7 +29,11 @@ STRATEGY_LABELS: dict[str, str] = {
     RETRACAO_LOTE: "Estudo · retração no lote",
     REVERSAO_FORCA: "Estudo · reversão A (força trava)",
     REVERSAO_INDECISAO: "Estudo · reversão B (força rompe indecisão)",
+    SCORE_NAME: "Score LDP v1 (combo)",
 }
+
+# Entrada que o usuário fez na mão. Fica só nas ordens: não é estratégia e nunca entra nas estatísticas delas.
+MANUAL = "manual"
 
 
 def default_strategies() -> list[Strategy]:
@@ -36,6 +41,6 @@ def default_strategies() -> list[Strategy]:
 
 
 __all__ = [
-    "APOSTILA_NAME", "RETRACAO_NAME", "REGISTRY", "STRATEGY_LABELS", "STRATEGY_ORDER", "Direction", "LdpApostila", "LdpV13",
+    "APOSTILA_NAME", "MANUAL", "RETRACAO_NAME", "REGISTRY", "SCORE_NAME", "STRATEGY_LABELS", "STRATEGY_ORDER", "Direction", "LdpApostila", "LdpV13",
     "LdpV13Linhas", "Signal", "Strategy", "WikiProV21", "default_strategies",
 ]

@@ -16,10 +16,16 @@ from app.db.database import Database
 from app.paper import DRAW, LOSS, WIN
 from app.risk import RiskConfig, RiskManager
 from app.service.events import EventHub
+from app.strategies import MANUAL
 
 log = logging.getLogger(__name__)
 
 RESULT_TIMEOUT = 90  # segundos depois do vencimento sem resultado = "sem_resultado"
+MANUAL_REPEAT_SECONDS = 1.0  # mesmo par e direção em menos que isso é clique duplo
+
+
+class DuplicateOrderError(ValueError):
+    pass
 
 
 class OrderManager:
@@ -41,11 +47,13 @@ class OrderManager:
         self._threaded = threaded
         self._lock = threading.Lock()
         self.risk = RiskManager()
+        self._manual_open = 0  # entradas manuais abertas: ficam fora da gestão de risco do bot
+        self._manual_last: dict[tuple[str, str], float] = {}
 
     @property
     def open_count(self) -> int:
         with self._lock:
-            return self.risk.open_orders
+            return self.risk.open_orders + self._manual_open
 
     def reset(self, cfg: RiskConfig) -> None:
         with self._lock:
@@ -61,6 +69,8 @@ class OrderManager:
         Sem isso, o stop loss voltaria a contar do zero."""
         with self._lock:
             for o in sorted(rows, key=lambda r: (r["requested_at"], r["id"])):
+                if o["strategy"] == MANUAL:
+                    continue
                 if o["status"] in (WIN, LOSS, DRAW):
                     self.risk.closed(o["status"], o.get("profit") or 0.0, o["amount"])
                 elif o["status"] == "sem_resultado":  # como em _run: para a gestão de risco conta como perda
@@ -68,7 +78,30 @@ class OrderManager:
 
     def snapshot(self, payout: float = 0.85) -> dict:
         with self._lock:
-            return self.risk.snapshot(payout)
+            return self.risk.snapshot(payout) | {"manual_open": self._manual_open}
+
+    def submit_manual(self, *, asset: str, timeframe: int, direction: str, amount: float, minutes: int,
+                      ref_price: float | None, requested_at: int, account: str | None) -> dict:
+        """Entrada feita na mão: a decisão é do usuário, então os stops do bot não bloqueiam nem contam com ela."""
+        key = (asset, direction)
+        with self._lock:
+            mono = time.monotonic()
+            if mono - self._manual_last.get(key, -MANUAL_REPEAT_SECONDS) < MANUAL_REPEAT_SECONDS:
+                raise DuplicateOrderError("Clique repetido: essa entrada já foi enviada.")
+            self._manual_last[key] = mono
+            self._manual_open += 1
+        row = self.db.add_order(asset=asset, timeframe=timeframe, strategy=MANUAL, direction=direction, ref_price=ref_price,
+                                signal_id=None, gale=0, amount=amount, status="enviando", requested_at=requested_at,
+                                **({"account": account} if account else {}))
+        self._publish(row)
+        self._start(row, minutes)
+        return row
+
+    def _start(self, row: dict, minutes: int = 1) -> None:
+        if self._threaded:
+            threading.Thread(target=self._run, args=(row, minutes), name=f"ordem-{row['id']}", daemon=True).start()
+        else:
+            self._run(row, minutes)
 
     def submit(self, *, asset: str, timeframe: int, strategy: str, direction: str, ref_price: float | None,
                signal_id: int | None, payout: float = 0.85) -> dict:
@@ -86,20 +119,30 @@ class OrderManager:
             return row
         row = self.db.add_order(**base, amount=amount, status="enviando")
         self._publish(row)
-        if self._threaded:
-            threading.Thread(target=self._run, args=(row,), name=f"ordem-{row['id']}", daemon=True).start()
-        else:
-            self._run(row)
+        self._start(row)
         return row
 
-    def _run(self, row: dict) -> None:
+    def _not_sent(self, row: dict) -> None:
+        with self._lock:
+            if row["strategy"] == MANUAL:
+                self._manual_open = max(0, self._manual_open - 1)
+            else:
+                self.risk.cancel(row["amount"])
+
+    def _closed(self, row: dict, result: str, profit: float) -> None:
+        with self._lock:
+            if row["strategy"] == MANUAL:
+                self._manual_open = max(0, self._manual_open - 1)
+            else:
+                self.risk.closed(result, profit, row["amount"])
+
+    def _run(self, row: dict, minutes: int = 1) -> None:
         try:
             broker = self._broker()
-            ticket = broker.buy(row["asset"], row["direction"], row["amount"])
+            ticket = broker.buy(row["asset"], row["direction"], row["amount"], minutes)
         except Exception as exc:  # noqa: BLE001 - qualquer falha vira "erro" na ordem
             log.warning("Ordem %s não enviada: %s", row["id"], exc)
-            with self._lock:
-                self.risk.cancel(row["amount"])
+            self._not_sent(row)
             self._publish(self.db.update_order(row["id"], status="erro", error=str(exc)[:300]))
             return
         self._publish(self.db.update_order(row["id"], status="aberta", broker_order_id=ticket.order_id,
@@ -111,14 +154,12 @@ class OrderManager:
         while True:
             res = self._result(row["id"], ticket, broker)
             if res is not None:
-                with self._lock:
-                    self.risk.closed(res.result, res.profit, row["amount"])
+                self._closed(row, res.result, res.profit)
                 self._publish(self.db.update_order(row["id"], status=res.result, profit=res.profit))
                 return
             if self._now() > give_up:
                 # Sem resposta da IQ: para a gestão de risco conta como perda (o lado seguro).
-                with self._lock:
-                    self.risk.closed(LOSS, -row["amount"], row["amount"])
+                self._closed(row, LOSS, -row["amount"])
                 self._publish(self.db.update_order(row["id"], status="sem_resultado",
                                                    error="A IQ não informou o resultado; confira no histórico da corretora"))
                 return

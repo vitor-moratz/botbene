@@ -18,6 +18,11 @@ class EventHub:
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
 
+    @property
+    def clients(self) -> int:
+        """Quantos painéis estão abertos agora."""
+        return len(self._queues)
+
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue()
         self._queues.add(q)

@@ -28,17 +28,23 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 from app.broker.base import AccountType, Broker, BrokerError, OrderResult, OrderTicket, expiry_for
-from app.market.candle import Candle
+from app.market.candle import Candle, normalize_asset, valid_asset
 from app.paper import DRAW, LOSS, WIN
 
 log = logging.getLogger(__name__)
 
 MAX_CANDLES_PER_REQUEST = 1000
-INSTRUMENTS_TTL = 600  # segundos até recarregar a lista de binárias (horários e payouts mudam)
+INSTRUMENTS_TTL = 120  # segundos até recarregar a lista de binárias (horários e payouts mudam; ler leva ~1 s)
+MAX_TURBO_MINUTES = 5  # a partir de 15 min é outro produto, com outro payout
+CATEGORIES = (("forex", "Moedas"), ("crypto", "Cripto"), ("equities", "Ações"), ("indices", "Índices"))
 CLOCK_FROZEN_SECONDS = 60  # o horário da IQ chega pelo websocket: parado por isso = conexão morta
 MAX_STUCK_CALLS = 6  # chamadas que nem à força encerraram (presas em rede): daqui em diante a conexão é dada como travada
 REAP_SECONDS = 0.5
 T = TypeVar("T")
+
+
+def _category(group: str) -> str:
+    return next((label for key, label in CATEGORIES if key in group), "Outros")
 
 
 def _order_result(win: str | None, win_amount: float, amount: float) -> OrderResult | None:
@@ -239,17 +245,22 @@ class IQOptionBroker(Broker):
             log.warning("Lista de instrumentos indisponível: %s", exc)
             return
         found: dict[str, dict] = {}
+        groups = (init or {}).get("groups") or {}
         for kind in ("binary", "turbo"):  # turbo por último: é a de 1 minuto
             for aid, a in ((init or {}).get(kind) or {}).get("actives", {}).items():
                 name = str(a.get("name", "")).split(".")[-1]
                 if not name:
                     continue
                 op_code.ACTIVES.setdefault(name, int(aid))
-                commission = ((a.get("option") or {}).get("profit") or {}).get("commission")
+                option = a.get("option") or {}
+                commission = (option.get("profit") or {}).get("commission")
                 found[name] = {
                     "id": int(aid), "kind": kind, "enabled": bool(a.get("enabled")), "suspended": bool(a.get("is_suspended")),
                     "schedule": a.get("schedule") or [],
                     "payout": (100 - commission) / 100 if commission is not None else None,
+                    "label": str(a.get("description") or name).removeprefix("front."),
+                    "category": _category(str(groups.get(str(a.get("group_id")), ""))),
+                    "min": a.get("minimal_bet"), "max": a.get("maximal_bet"), "count": option.get("count"),
                 }
         if found:
             self._instruments, self._instruments_at = found, time.time()
@@ -264,15 +275,33 @@ class IQOptionBroker(Broker):
             return False, f"{asset} não está na lista de binárias da IQ (pares normais terminam em -op, ex.: EURUSD-op)"
         if info["kind"] != "turbo":
             return False, f"{asset} não tem binária de 1 minuto"
-        now = self.server_time()
+        reason = self._closed_reason(asset, info, self.server_time())
+        return (False, reason) if reason else (True, "ok")
+
+    @staticmethod
+    def _closed_reason(asset: str, info: dict, now: float) -> str | None:
         if not info["enabled"] or info["suspended"] or not any(s[0] <= now <= s[1] for s in info["schedule"]):
-            return False, f"{asset} está fechado para binária agora"
-        return True, "ok"
+            return f"{asset} está fechado para binária agora"
+        return None
 
     def payout_now(self, asset: str) -> float | None:
-        """Da lista de instrumentos em memória (recarregada a cada 10 min em segundo plano)."""
+        """Da lista de instrumentos em memória (recarregada em segundo plano)."""
         info = self._instrument(asset)
         return info["payout"] if info and info["kind"] == "turbo" else None
+
+    def pairs(self) -> list[dict]:
+        now = self.server_time()
+        out = []
+        for name, info in self._instruments.items():
+            # Nomes que o resto do bot não aceita (com "/", ":", espaço ou minúsculas) ficam de fora.
+            if info["kind"] != "turbo" or not valid_asset(name) or normalize_asset(name) != name:
+                continue
+            reason = self._closed_reason(name, info, now)
+            out.append({"asset": name, "label": info.get("label") or name, "category": info.get("category") or "Outros",
+                        "payout": info["payout"], "open": reason is None, "reason": reason,
+                        "min": info.get("min"), "max": info.get("max"),
+                        "expiries": list(range(1, min(info.get("count") or 1, MAX_TURBO_MINUTES) + 1))})
+        return out
 
     def disconnect(self) -> None:
         if self._api is None:
@@ -381,6 +410,19 @@ class IQOptionBroker(Broker):
 
     def stop_stream(self, asset: str, timeframe: int) -> None:
         self._call(f"parar stream {asset}", lambda: self._api.stop_candles_stream(asset, timeframe), timeout=10)
+
+    def release_stream(self, asset: str, timeframe: int) -> None:
+        """O mesmo pedido de `stop_candles_stream`, sem os 5 s por par que ela dorme para conferir se o preço parou."""
+        from iqoptionapi import constants as op_code
+
+        def send() -> None:
+            key = f"{asset},{timeframe}"
+            if key in self._api.subscribe_candle:  # senão a biblioteca reabre o stream ao reconectar
+                self._api.subscribe_candle.remove(key)
+            self._api.api.candle_generated_check[asset][timeframe] = {}
+            self._api.api.unsubscribe(op_code.ACTIVES[asset], timeframe)
+
+        self._call(f"cancelar stream {asset}", send, timeout=3)
 
     def stream_candles(self, asset: str, timeframe: int) -> list[Candle]:
         raw = self._call(f"stream {asset}", lambda: self._api.get_realtime_candles(asset, timeframe), timeout=5)

@@ -28,8 +28,9 @@ def apostila_entries(asset: str, candles: Sequence[Candle], subs: Iterable[Candl
 
 def intra_entries(asset: str, candles: Sequence[Candle], subs: Iterable[Candle], payout: float,
                   strategies: Sequence | None = None, timeframe: int = 60) -> list[dict]:
-    """Todas as estratégias de dentro da vela, como o bot roda."""
-    _, plans = run_intra(candles, strategies, timeframe)
+    """Todas as estratégias de dentro da vela, como o bot roda (o score vê as velas de 5 s para a recorrência)."""
+    subs = list(subs)
+    _, plans = run_intra(candles, strategies, timeframe, subs)
     return _intra_rows(asset, candles, plans, subs, payout, timeframe)
 
 

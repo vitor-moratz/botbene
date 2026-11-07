@@ -28,9 +28,11 @@ import math
 import threading
 import time
 from collections import deque
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
+from datetime import datetime
 
 from app.analytics.stats import breakeven
+from app.analytics.timeline import BRT, period_start
 from app.broker.base import Broker, BrokerError
 from app.config import Settings
 from app.db.database import Database
@@ -42,9 +44,10 @@ from app.service.chart import build_chart, build_reading, candle_dict, ldp_overl
 from app.service.config_store import ORDER_MODES, ConfigStore, UserConfig
 from app.service.events import EventHub
 from app.service.orders import OrderManager
+from app.service.watch import PairWatcher
 from app.strategies import STRATEGY_ORDER
 from app.strategies.base import Signal, Strategy
-from app.strategies.intra import default_intra, plan_all
+from app.strategies.intra import default_intra, plan_all, replay, wants_windows, watch_forming
 from app.strategies.ldp_apostila import ArmedSetup, Plan, gap_ok, touched
 from app.strategies.ldp_apostila import backtest as intra_backtest
 
@@ -55,10 +58,14 @@ STREAM_GRACE_SECONDS = 3
 STORE_MAXLEN = 1500
 SUB_TIMEFRAME = 5  # velas curtas usadas no backtest do gatilho de 15 s
 MAX_SUB_CANDLES = 6000
+DAY_WARMUP_CANDLES = 120  # velas antes da meia-noite, para a leitura já chegar no dia com níveis e médias
+SCORE_WARMUP_SECONDS = 2 * 3600  # velas de 5 s antes da meia-noite: a recorrência do score chega no dia já com histórico
 EXCERPT_CANDLES = 60  # velas no gráfico de cada pedido de aprovação
 READING_CONTEXT = 300  # velas antes do trecho mostrado, para a leitura já chegar nele com lotes e regiões
 APPROVALS_KEPT = 12
 OPEN_APPROVAL = ("aguardando", "aprovado", "disparou")
+LIVE_STATUSES = ("conectando", "rodando", "reconectando")
+STOP_STREAMS_SECONDS = 5  # numa conexão travada, parar não insiste além disso em cancelar os streams
 
 # Vigia da conexão
 MAX_POLL_FAILURES = 3  # leituras seguidas com erro antes de reconectar (uma falha solta é normal)
@@ -73,6 +80,11 @@ PERMANENT_ERRORS = ("invalid_credentials", "Preencha IQ_EMAIL", "2FA", "Conta RE
 
 def _permanent(exc: Exception) -> bool:
     return any(key in str(exc) for key in PERMANENT_ERRORS)
+
+
+def _first_armed_today(candles: Sequence[Candle], plans: Sequence[Plan], tf: int, day_start: int) -> int | None:
+    """Horário da primeira vela com entrada armada para hoje (a entrada é na vela seguinte à decisão)."""
+    return next((c.ts for c, plan in zip(candles, plans) if plan.armed and c.ts + tf >= day_start), None)
 
 
 class BotBusyError(RuntimeError):
@@ -161,7 +173,8 @@ class BotService:
         self.started_at: int | None = None
         self.runners: dict[str, AssetRunner] = {}
         self.focus: str | None = None
-        self.armed_log: deque[dict] = deque(maxlen=20)
+        self.watcher = PairWatcher(self, lambda asset, timeframe: AssetRunner(asset, timeframe, []))
+        self.armed_log: deque[dict] = deque(maxlen=40)  # inclui os pulos do score
         self.approvals: list[dict] = []
         self._approval_seq = itertools.count(1)
         self._clock: tuple[float, float] | None = None  # (horário do servidor, monotonic) da última leitura
@@ -189,7 +202,22 @@ class BotService:
         return self._thread is not None and self._thread.is_alive()
 
     def runner(self, asset: str | None = None) -> AssetRunner | None:
-        return self.runners.get(asset or self.focus or "")
+        """Os dados de um par: do bot, se ele estiver cuidando desse par, senão do observador."""
+        name = asset or self.focus or ""
+        own = self.runners.get(name)
+        if own is None or not own.ready or self.status != "rodando":
+            watched = self.watcher.runner_for(name)
+            if watched is not None:
+                return watched
+        return own
+
+    def stream_in_use(self, asset: str) -> bool:
+        """O bot está ligado (ou ligando) e acompanha este par? Então o stream é dele."""
+        return self.running and not self._stop.is_set() and asset in self.runners
+
+    def current_broker(self) -> Broker | None:
+        """A conexão atual, sem abrir outra."""
+        return self._broker
 
     def configure(self, assets: Iterable[str], timeframe: int) -> None:
         assets = list(dict.fromkeys(assets))
@@ -200,7 +228,8 @@ class BotService:
         self.order_strategies = set(cfg.operating)
         self.running_strategies = set(cfg.running)
         self.runners = {a: AssetRunner(a, timeframe, self._strategies_factory()) for a in assets}
-        if self.focus not in self.runners:
+        watched = self.watcher.asset
+        if self.focus not in self.runners and (watched is None or self.focus != watched):  # continua no par da tela
             self.focus = assets[0]
 
     def _intra_for(self, timeframe: int) -> list:
@@ -214,7 +243,8 @@ class BotService:
     def start(self, assets: Iterable[str] | None = None, timeframe: int | None = None) -> None:
         with self._lock:
             if self.running:
-                raise BotBusyError("O bot já está rodando. Pare antes de trocar os ativos.")
+                raise BotBusyError("O bot ainda está parando. Espere alguns segundos." if self.status == "parando"
+                                   else "O bot já está rodando. Pare antes de trocar os ativos.")
             cfg = self.config.get()
             if cfg.account == "REAL" and not cfg.stop_loss:
                 raise ValueError("Na conta real, defina um stop loss (Configuração → Gestão de risco) antes de iniciar.")
@@ -233,7 +263,14 @@ class BotService:
             self._thread.start()
 
     def stop(self, wait: float = 15.0) -> None:
+        """Pede para parar: o painel vê "parando" na hora. `wait` é quanto esperar o bot terminar."""
         self._stop.set()
+        with self._lock:
+            changed = self.status in LIVE_STATUSES
+            if changed:
+                self.status = "parando"
+        if changed:
+            self.hub.publish({"type": "status", **self.snapshot()})
         thread = self._thread
         if thread is not None:
             thread.join(wait)
@@ -270,6 +307,7 @@ class BotService:
             if self.running:
                 raise BotBusyError("Pare o bot antes de zerar o histórico.")
             out = self.db.reset_history(self.settings.resolved_data_dir() / "backups")
+            self.watcher.stop()
             self.runners, self.focus = {}, None
             self.approvals, self.started_at, self.error = [], None, None
             self.armed_log.clear()
@@ -279,11 +317,64 @@ class BotService:
         return out
 
     def set_focus(self, asset: str) -> None:
+        """Troca o par da tela. Olhar um par não muda o que o bot opera."""
         with self._lock:
-            if asset not in self.runners:
-                raise KeyError(asset)
             self.focus = asset
+            if not self.running:
+                self.timeframe = self.config.get().timeframe
+        self._sync_watcher()
         self.hub.publish({"type": "status", **self.snapshot()})
+
+    def _sync_watcher(self) -> None:
+        """O observador só fica com o par da tela quando o bot não está cuidando dele."""
+        focus = self.focus
+        if focus is None or (self.status == "rodando" and focus in self.runners and self.runners[focus].ready):
+            self.watcher.stop()
+        else:
+            self.watcher.watch(focus, self.timeframe)
+
+    def pairs_view(self) -> dict:
+        """Pares para escolher na tela. A lista vem da memória: não consulta a IQ a cada pedido."""
+        bot_assets = list(self.runners) if self.running else list(self.config.get().assets)
+        try:
+            return {"pairs": self._panel_broker().pairs(), "bot_assets": bot_assets, "error": None}
+        except Exception as exc:  # noqa: BLE001 - sem conexão: o painel mostra os pares conhecidos, sem payout
+            return {"pairs": [], "bot_assets": bot_assets, "error": str(exc)}
+
+    def _panel_broker(self) -> Broker:
+        """Conexão para o que o painel pede. Com o bot ligado, a conexão é dele: nunca abre outra em paralelo."""
+        if self.status in ("parado", "erro"):
+            return self.shared_broker()
+        broker = self._broker
+        if broker is None:
+            raise BrokerError("Sem conexão com a IQ Option agora: o bot está reconectando.")
+        return broker
+
+    def manual_order(self, asset: str, direction: str, amount: float, minutes: int) -> dict:
+        """Entrada feita na mão. Fora dos stops e dos filtros do bot; só vale o que a IQ exige."""
+        if self.status == "reconectando":
+            raise BotBusyError("O bot está reconectando à IQ. Espere alguns segundos.")
+        broker = self._panel_broker()
+        info = next((p for p in broker.pairs() if p["asset"] == asset), None)
+        if info is None:
+            raise ValueError(f"{asset} não está na lista de binárias da IQ.")
+        if not info["open"]:
+            raise ValueError(info["reason"] or f"{asset} está fechado para binária agora.")
+        if minutes not in info["expiries"]:
+            raise ValueError(f"{asset} não tem expiração de {minutes} min.")
+        amount = round(amount, 2)
+        low, high = info.get("min"), info.get("max")
+        if (low is not None and amount < low) or (high is not None and amount > high):
+            raise ValueError(f"O valor em {asset} precisa ficar entre {low} e {high}.")
+        with self._lock:
+            r = self.runner(asset)
+            closed = r.store.closed if r and r.store else []
+            forming = r.store.forming if r and r.store else None
+            price = forming.close if forming else (closed[-1].close if closed else None)
+            timeframe = r.timeframe if r else self.timeframe
+        account = getattr(broker, "account", None)
+        return self.orders.submit_manual(asset=asset, timeframe=timeframe, direction=direction, amount=amount, minutes=minutes,
+                                         ref_price=price, requested_at=int(self._now()), account=getattr(account, "value", account))
 
     def apply_config(self, cfg: UserConfig) -> None:
         """Modo, quem opera e gestão de risco valem na hora; ligar ou desligar estratégia, ativos e vela, no próximo início."""
@@ -395,7 +486,7 @@ class BotService:
                 "status": self.status,
                 "error": self.error,
                 "progress": self.progress,
-                "asset": r.asset if r else None,
+                "asset": r.asset if r else self.focus,
                 "assets": [run.summary() for run in self.runners.values()],
                 "timeframe": self.timeframe,
                 "account": self.account,
@@ -418,6 +509,7 @@ class BotService:
                 "active_strategies": self.active_strategies(),
                 "risk": self.orders.snapshot(payout or self.settings.default_payout),
                 "connection": dict(self.connection),
+                "watch": self.watcher.view(),
             }
 
     def chart(self, limit: int = 300, asset: str | None = None) -> dict:
@@ -473,6 +565,8 @@ class BotService:
                 self._bootstrap(broker)
                 self._mark_healthy()
                 self._set_status("rodando")
+                if not self._stop.is_set():  # parando no meio da carga: o observador não liga à toa
+                    self._sync_watcher()
             except BrokerError as exc:
                 if _permanent(exc):
                     raise
@@ -491,23 +585,31 @@ class BotService:
                 self.error = str(exc)
             self._set_status("erro")
         finally:
-            for r in self.runners.values():
-                if broker is not None and r.ready:
-                    try:
-                        broker.stop_stream(r.asset, r.timeframe)
-                    except Exception:  # noqa: BLE001 - a IQ às vezes não confirma; não importa ao parar
-                        pass
-                if r.session_id is not None:
-                    self.db.end_session(r.session_id, reason)
-            with self._lock:
+            with self._lock:  # primeiro o que não depende da IQ: nenhum pedido fica aberto enquanto os streams fecham
                 for r in self.runners.values():
                     r.armed = []
                 for ap in self.approvals:
                     if ap["status"] in OPEN_APPROVAL:
                         self._close_approval(ap, "cancelado: bot parado")
                 self.progress = None
+            for r in self.runners.values():
+                if r.session_id is not None:
+                    self.db.end_session(r.session_id, reason)
+            if broker is not None:
+                self._release_streams(broker)
             if self.status != "erro":
                 self._set_status("parado")
+            if self.hub.clients:  # com o painel aberto, o gráfico continua ao vivo depois de parar
+                self._sync_watcher()
+
+    def _release_streams(self, broker: Broker) -> None:
+        deadline = time.monotonic() + STOP_STREAMS_SECONDS
+        for r in self.runners.values():
+            if r.ready and r.asset != self.watcher.asset and time.monotonic() < deadline:
+                try:
+                    broker.release_stream(r.asset, r.timeframe)
+                except Exception as exc:  # noqa: BLE001 - conexão ruim não pode segurar a parada
+                    log.debug("%s: stream não cancelado: %s", r.asset, exc)
 
     # ------------------------------------------------------------------ vigia da conexão
 
@@ -605,7 +707,7 @@ class BotService:
             self.hub.publish({"type": "status", **self.snapshot()})
             try:
                 broker = self.shared_broker(force=True)
-                self._bootstrap(broker)
+                self._bootstrap(broker, full_day=initial)  # numa queda, o importante é voltar logo a operar
             except BrokerError as exc:
                 if _permanent(exc):  # ex.: a senha mudou: tentar de novo não adianta
                     raise
@@ -632,6 +734,8 @@ class BotService:
                 self.progress = None
             self._mark_healthy()
             self._set_status("rodando")
+            if not self._stop.is_set():
+                self._sync_watcher()
             return broker
         return None
 
@@ -644,17 +748,20 @@ class BotService:
             except Exception as exc:  # noqa: BLE001 - conexão que já morreu pode não fechar direito
                 log.debug("Conexão velha não fechou: %s", exc)
 
-    def _bootstrap(self, broker: Broker) -> None:
+    def _bootstrap(self, broker: Broker, full_day: bool = True) -> None:
+        """`full_day`: também busca as velas de 5 s que faltam para o retroativo cobrir o dia inteiro."""
         payouts = self._fetch_payouts(broker)
         self.currency = broker.currency()
         runners = list(self.runners.values())
         errors = []
         for i, r in enumerate(runners, 1):
+            if self._stop.is_set():  # pediram para parar no meio da carga: os outros pares nem carregam
+                return
             with self._lock:
                 self.progress = f"carregando {r.asset} ({i} de {len(runners)})" if len(runners) > 1 else None
             self.hub.publish({"type": "status", **self.snapshot()})
             try:
-                self._bootstrap_runner(broker, r, payouts.get(r.asset))
+                self._bootstrap_runner(broker, r, payouts.get(r.asset), full_day)
             except BrokerError as exc:
                 log.warning("%s fora do bot: %s", r.asset, exc)
                 r.error = str(exc)
@@ -663,24 +770,28 @@ class BotService:
             self.progress = None
             if not any(r.ready for r in runners):
                 raise BrokerError("; ".join(errors) or "Nenhum ativo carregado")
-            if self.focus not in self.runners or not self.runners[self.focus].ready:
+            watched = self.focus is not None and self.focus == self.watcher.asset  # o usuário está olhando esse par
+            if not watched and (self.focus not in self.runners or not self.runners[self.focus].ready):
                 self.focus = next(r.asset for r in runners if r.ready)
         self.hub.publish({"type": "reload"})
 
-    def _bootstrap_runner(self, broker: Broker, r: AssetRunner, payout: float | None) -> None:
+    def _bootstrap_runner(self, broker: Broker, r: AssetRunner, payout: float | None, full_day: bool = True) -> None:
         tf = r.timeframe
-        history = broker.get_candles(r.asset, tf, self.settings.history_candles)
+        now = broker.server_time()
+        day_start = period_start("hoje", datetime.fromtimestamp(now, BRT))
+        # O gráfico e o retroativo vão até a meia-noite de Brasília; o `history_candles` é o mínimo.
+        wanted = (int(now) - day_start) // tf + 1 + DAY_WARMUP_CANDLES
+        history = broker.get_candles(r.asset, tf, min(STORE_MAXLEN, max(self.settings.history_candles, wanted)))
         if not history:
             raise BrokerError(f"Nenhuma vela recebida para {r.asset}. O ativo está aberto agora?")
         store = CandleStore(r.asset, tf, maxlen=STORE_MAXLEN)
         store.load_history(history)
         engine = LdpEngine()
         intra = self._intra_for(tf)
-        plans: list[Plan] = []
-        step = None
-        for c in store.closed:
-            step = engine.process(c)
-            plans.append(plan_all(intra, step, engine))
+        subs: list[Candle] | None = None
+        if wants_windows(intra):  # o score precisa ver os primeiros 15 s de cada vela (recorrência): 5 s antes de processar
+            subs = self._fetch_subcandles(broker, r.asset, tf, len(history), day_start - SCORE_WARMUP_SECONDS if full_day else None)
+        plans, step = replay(intra, engine, store.closed, subs, tf)
         with self._lock:
             r.store, r.engine, r.intra, r.last_step = store, engine, intra, step
             r.payout = payout or self.settings.default_payout
@@ -693,7 +804,11 @@ class BotService:
         r.tradable = broker.tradable(r.asset)
         r.session_id = self.db.start_session(r.asset, tf, self.account or "PRACTICE", r.payout)
         self._resolve_from_history(r, store.closed)
-        subs = self._fetch_subcandles(broker, r.asset, tf, len(history))
+        if self._stop.is_set():  # as velas de 5 s são a parte mais demorada da carga
+            return
+        if subs is None:
+            since = _first_armed_today(store.closed, plans, tf, day_start) if full_day else None
+            subs = self._fetch_subcandles(broker, r.asset, tf, len(history), since)
         self._backtest(r, store.closed, plans, subs)
         broker.start_stream(r.asset, tf, 10)
         self._tick_clock(broker.server_time())
@@ -709,8 +824,11 @@ class BotService:
             log.warning("Não foi possível ler os payouts: %s", exc)
             return {}
 
-    def _fetch_subcandles(self, broker: Broker, asset: str, tf: int, n_candles: int) -> list[Candle]:
+    def _fetch_subcandles(self, broker: Broker, asset: str, tf: int, n_candles: int, since: int | None = None) -> list[Candle]:
+        """`since`: vai pelo menos até esse horário (é a parte mais lenta da carga, por isso não vai além do necessário)."""
         count = min(MAX_SUB_CANDLES, n_candles * tf // SUB_TIMEFRAME)
+        if since is not None:
+            count = max(count, (int(broker.server_time()) - since + tf) // SUB_TIMEFRAME)
         try:
             return broker.get_candles(asset, SUB_TIMEFRAME, count)
         except Exception as exc:  # noqa: BLE001 - sem velas curtas, as de dentro da vela só não entram no backtest
@@ -741,6 +859,8 @@ class BotService:
 
     def _poll(self, broker: Broker) -> None:
         for r in list(self.runners.values()):
+            if self._stop.is_set():  # pediram para parar: nenhum outro par dispara entrada
+                return
             if r.ready:
                 self._poll_runner(broker, r)
         changed = False
@@ -780,6 +900,9 @@ class BotService:
         for c in closed:
             self._on_close(r, c)
         forming = r.store.forming
+        if forming is not None and r.intra:
+            with self._lock:  # o score acompanha os primeiros 15 s de toda vela, entre ou não (recorrência)
+                watch_forming(r.intra, forming, now)
         if forming is not None and r.armed:
             self._check_triggers(r, forming, now)
         if forming is not None and forming != r.last_forming:
@@ -795,6 +918,8 @@ class BotService:
                 self._finish_for(r, a, "não disparou")
             plan = plan_all(r.intra, step, r.engine)
             r.armed, r.plan_reasons = list(plan.armed), list(plan.reasons)
+            for note in plan.skipped:  # avaliada e pulada: o score diz quais padrões faltaram
+                self.armed_log.appendleft(note | {"asset": r.asset})
             r.gap_checked = {k for k in r.gap_checked if k[0] > candle.ts}
             new = [s.evaluate_last(r.store.closed) for s in r.strategies]
             opened = self._open_approvals(r, r.armed, candle.ts + r.timeframe)
@@ -1050,5 +1175,6 @@ class BotService:
 
     def _set_status(self, status: str) -> None:
         with self._lock:
-            self.status = status
+            # Depois do pedido de parar, nada volta a mostrar "rodando" enquanto o bot termina.
+            self.status = "parando" if self._stop.is_set() and status in LIVE_STATUSES else status
         self.hub.publish({"type": "status", **self.snapshot()})

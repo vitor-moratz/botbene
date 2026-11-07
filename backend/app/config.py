@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # Modo paper: payout usado quando a IQ não informar o do ativo (0.85 = 85%).
     default_payout: float = 0.85
-    # Velas de histórico carregadas ao iniciar (também viram o backtest imediato no painel).
+    # Mínimo de velas de histórico ao iniciar; o bot carrega mais quando precisa para cobrir o dia desde a meia-noite.
     history_candles: int = 500
 
     def resolved_data_dir(self) -> Path:

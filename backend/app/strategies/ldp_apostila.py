@@ -96,7 +96,7 @@ class ArmedSetup:
     @property
     def setup_label(self) -> str:
         trig = {"retracao": "retração", "reversao": "reversão", "throwback": "throwback",
-                "comando": "retração no comando"}[self.trigger]
+                "comando": "retração no comando", "score": "score"}[self.trigger]
         return f"{trig} · {self.level_sources[0]}" if self.level_sources else trig
 
     def level_for_open(self, open_price: float) -> float:
@@ -122,6 +122,8 @@ class Plan:
     index: int
     armed: list[ArmedSetup]
     reasons: list[str]
+    # Entradas avaliadas e puladas, com o motivo (o painel mostra em "Últimos setups").
+    skipped: list[dict] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------- gatilho (vela de entrada)

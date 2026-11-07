@@ -4,19 +4,23 @@
 
   // Ordem fixa: a cor segue o script, nunca a posição na lista.
   var STRATEGY_ORDER = ['ldp_v13', 'ldp_v13_linhas', 'wiki_pro_v21', 'ldp_apostila', 'retracao_comando',
-    'retracao_lote', 'reversao_forca', 'reversao_indecisao'];
+    'retracao_lote', 'reversao_forca', 'reversao_indecisao', 'score_ldp'];
+  var SCORE = 'score_ldp';  // o combo: várias estratégias e padrões juntos decidem a entrada
   var LABELS = {
     ldp_v13: 'LDP v1.3', ldp_v13_linhas: 'LDP v1.3 + regra das linhas', wiki_pro_v21: 'WIKI PRO V2.1',
     ldp_apostila: 'Apostila · marcações', retracao_comando: 'Apostila · retração no comando',
     retracao_lote: 'Estudo · retração no lote', reversao_forca: 'Estudo · reversão A (força trava)',
-    reversao_indecisao: 'Estudo · reversão B (força rompe indecisão)'
+    reversao_indecisao: 'Estudo · reversão B (força rompe indecisão)', score_ldp: 'Score LDP v1 (combo)',
+    manual: 'Entrada manual'
   };
-  var TRIGGER_LABELS = { retracao: 'Retração', reversao: 'Reversão', throwback: 'Throwback', comando: 'Retração no comando' };
+  var MANUAL = 'manual';  // ordem que você fez na mão: não é estratégia e não entra nas estatísticas delas
+  var TRIGGER_LABELS = { retracao: 'Retração', reversao: 'Reversão', throwback: 'Throwback', comando: 'Retração no comando', score: 'Score' };
   var CONF_LABELS = {
     gatilho: 'gatilho', forca: 'marcação forte', contexto: 'nova alta/baixa + nova posição',
     espaco: 'espaço até a barreira', tendencia: 'tendência EMA',
     marcacao: 'comando ou taxa dividida', indecisao: 'dupla/tripla posição',
-    registro: 'primeiro registro + nova posição', juntas: 'marcações juntas'
+    registro: 'primeiro registro + nova posição', juntas: 'marcações juntas',
+    nao_rompeu: 'comando dentro das 10 velas', recorrencia: 'recorrência do par'
   };
   var CLASS_LABELS = {
     comando_n1: 'Comando nível 1 (careca)', comando_unico: 'Comando único (nível 2)',
@@ -41,11 +45,11 @@
   var STATUS_INFO = {
     parado: { icon: '■', text: 'Parado' }, conectando: { icon: '●', text: 'Conectando…' },
     rodando: { icon: '●', text: 'Rodando' }, reconectando: { icon: '↻', text: 'Reconectando…' },
-    erro: { icon: '✗', text: 'Erro' }
+    parando: { icon: '■', text: 'Parando…' }, erro: { icon: '✗', text: 'Erro' }
   };
-  // Bot ligado (mesmo que conectando ou reconectando sozinho): o botão vira "Parar bot".
+  // Bot ligado (mesmo que conectando, reconectando sozinho ou terminando de parar).
   function isBusy(s) {
-    return !!s && (s.status === 'rodando' || s.status === 'conectando' || s.status === 'reconectando');
+    return !!s && (s.status === 'rodando' || s.status === 'conectando' || s.status === 'reconectando' || s.status === 'parando');
   }
   var PAGE_TITLES = { painel: 'Painel', entradas: 'Entradas', desempenho: 'Desempenho', config: 'Configuração' };
   var PAGES = ['painel', 'entradas', 'desempenho', 'config'];
@@ -60,6 +64,8 @@
     'Para usar a conta real mesmo assim, digite REAL:';
   // Na IQ, a binária dos pares normais é o instrumento com sufixo "-op".
   var DEFAULT_PAIRS = ['EURUSD-op', 'GBPUSD-op', 'USDJPY-op', 'AUDUSD-op', 'EURJPY-op', 'EURGBP-op', 'AUDJPY-op', 'NZDUSD-op'];
+  var OTC_PAIRS = ['EURUSD-OTC', 'GBPUSD-OTC', 'USDJPY-OTC', 'AUDUSD-OTC', 'EURJPY-OTC', 'EURGBP-OTC', 'AUDCAD-OTC', 'NZDUSD-OTC'];
+  var CHART_BARS = 240, CHART_BARS_MAX = 1500;  // com o retroativo à vista, o gráfico vai até a meia-noite
   var OPEN_APPROVAL = ['aguardando', 'aprovado', 'disparou'];
   var APPROVAL_STATE = {
     aguardando: { cls: 'warn', icon: '●', text: 'Aguardando sua decisão' },
@@ -83,6 +89,7 @@
 
   var tz = 'America/Sao_Paulo';
   var timeFmt = new Intl.DateTimeFormat('pt-BR', { timeZone: tz, hour: '2-digit', minute: '2-digit' });
+  var clockFmt = new Intl.DateTimeFormat('pt-BR', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit' });
   var dateTimeFmt = new Intl.DateTimeFormat('pt-BR', { timeZone: tz, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   var dayFmt = new Intl.DateTimeFormat('pt-BR', { timeZone: tz, day: '2-digit', month: '2-digit' });
   var pctFmt = new Intl.NumberFormat('pt-BR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -95,7 +102,8 @@
   function root() { return document.querySelector('.viz-root'); }
   function cssVar(name) { return getComputedStyle(root()).getPropertyValue(name).trim(); }
   function strategyColor(name) {
-    var i = STRATEGY_ORDER.indexOf(name);
+    // São 8 cores: o score usa a da "LDP v1.3 + regra das linhas", que só existe na ferramenta de pesquisa.
+    var i = name === SCORE ? 1 : STRATEGY_ORDER.indexOf(name);
     return cssVar('--series-' + (i >= 0 ? i + 1 : 4));
   }
   function label(name) { return LABELS[name] || name; }
@@ -131,6 +139,7 @@
     var suffix = v.slice(i + 1);
     return v.slice(0, i).toUpperCase() + '-' + (suffix.toLowerCase() === 'op' ? 'op' : suffix.toUpperCase());
   }
+  function isOtc(asset) { return /-OTC$/i.test(asset || ''); }
   // Horário da IQ (o relógio do computador pode estar fora): diferença medida a cada status.
   function serverNow() { return Date.now() / 1000 + (state.clockOffset || 0); }
   function fmtDateTime(ts) { return dateTimeFmt.format(new Date(ts * 1000)); }
@@ -177,7 +186,8 @@
     visible: {}, showBacktest: false, ePeriod: 'hoje', dPeriod: 'mes', connected: false, shuttingDown: false,
     config: null, cfgPairs: [], forming: {}, seenOpen: {}, beeped: {}, doneAt: {}, audio: null,
     uiVersion: null, ordersById: {}, resolvedAt: {}, apInit: false, entryLines: [], entriesByTime: {}, scriptMarksByTime: {},
-    showReading: false, readingData: null, readingByTime: {}
+    showReading: false, readingData: null, readingByTime: {}, retroData: null, retroSeq: 0, chartExpanded: false, chartOwnsFullscreen: false,
+    pairs: null, pairList: [], pairsError: null, pickerCat: 'Todos', manualSending: false, manualError: null, manualLastId: null
   };
   try { state.showReading = localStorage.getItem('botbene-leitura') === '1'; } catch (e) { /* sem armazenamento */ }
   // Cada estratégia está desligada (off), observando (observe: anota sem ordem) ou operando (operate).
@@ -246,7 +256,7 @@
     var icon = (RESULT_INFO[o.status] || ORDER_INFO[o.status] || { icon: '' }).icon;
     return { time: o.time, position: call ? 'belowBar' : 'aboveBar', color: cssVar('--text-primary'), size: 2,
       shape: call ? 'arrowUp' : 'arrowDown',
-      text: 'ENTRADA ' + (call ? 'CALL' : 'PUT') + (o.price != null ? ' ' + fmtPrice(o.price) : '') + (icon ? ' ' + icon : '') };
+      text: (o.strategy === MANUAL ? 'MANUAL ' : 'ENTRADA ') + (call ? 'CALL' : 'PUT') + (o.price != null ? ' ' + fmtPrice(o.price) : '') + (icon ? ' ' + icon : '') };
   }
   function byTime(a, b) { return a.time - b.time; }
   function tickFormatter(t, type) {
@@ -345,7 +355,8 @@
   // ------------------------------------------------------------------ status e controle do bot
   function renderStatus(s) {
     state.status = s;
-    if (s.server_time && s.status === 'rodando') state.clockOffset = s.server_time - Date.now() / 1000;
+    // O horário do servidor só vem da IQ com preço chegando (bot rodando ou par da tela ao vivo).
+    if (s.server_time && (s.status === 'rodando' || (s.watch && s.watch.state === 'ao_vivo'))) state.clockOffset = s.server_time - Date.now() / 1000;
     var info = STATUS_INFO[s.status] || { icon: '?', text: s.status };
     var chip = $('#status-chip');
     chip.dataset.status = s.status;
@@ -357,9 +368,10 @@
 
     var busy = isBusy(s);
     var btn = $('#btn-toggle');
-    btn.textContent = busy ? 'Parar bot' : 'Iniciar bot';
+    var stopping = s.status === 'parando';
+    btn.textContent = stopping ? 'Parando…' : busy ? 'Parar bot' : 'Iniciar bot';
     btn.classList.toggle('stop', busy);
-    btn.disabled = false;
+    btn.disabled = stopping;
     renderToolbarAssets();
 
     if (s.status === 'erro' && s.error) showBanner(s.error);
@@ -369,7 +381,8 @@
     var price = s.forming ? s.forming.close : (s.last_candle ? s.last_candle.close : null);
     if (price != null) $('#p-price').textContent = fmtPrice(price);
     if (s.payout) $('#p-be-sub').textContent = 'payout de ' + fmtPct(s.payout) + (s.asset ? ' no ' + s.asset : '');
-    renderFocus(s);
+    renderPairTabs();
+    renderManual();
     renderArmed(s);
     renderApprovals(s);
     renderRisk(s.risk);
@@ -384,19 +397,295 @@
     $('#tf-text').textContent = TF_TEXT[tf] || (tf / 60) + ' min';
   }
 
-  function renderFocus(s) {
-    var field = $('#focus-field');
-    var running = s.status === 'rodando' && s.assets && s.assets.length > 1;
-    field.hidden = !running;
-    if (!running) return;
-    var sel = $('#focus-asset');
-    var opts = s.assets.map(function (a) {
-      var extra = a.error ? ' (fora: ' + a.error.slice(0, 30) + ')'
-        : (a.tradable === false ? ' · fechado p/ binária' : '') + (a.armed ? ' · ' + a.armed + ' armado' : '');
-      return '<option value="' + esc(a.asset) + '"' + (a.error ? ' disabled' : '') + '>' + esc(a.asset + extra) + '</option>';
+  // ------------------------------------------------------------------ par do gráfico: abas e lista de todos os pares
+  // Olhar um par não muda o que o bot opera. Com o bot parado (ou num par fora da lista dele), o servidor
+  // mantém o par da tela ao vivo só para o gráfico.
+  var RECENT_MAX = 4;
+  var PAIR_CATS = ['Todos', 'Moedas', 'Cripto', 'Ações', 'Índices', 'Outros'];
+  function loadStored(key, fallback) {
+    try { var v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); } catch (e) { return fallback; }
+  }
+  function saveStored(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* sem armazenamento */ }
+  }
+  state.recentPairs = loadStored('botbene-recent-pairs', []);
+  state.manualMinutes = loadStored('botbene-manual-min', 1);
+  state.manualAmount = loadStored('botbene-manual-valor', null);
+
+  function focusAsset() {
+    var s = state.status;
+    return (s && s.asset) || (state.chartData && state.chartData.asset) || null;
+  }
+  function botAssets() {
+    var s = state.status;
+    if (isBusy(s) && s.assets && s.assets.length) return s.assets.map(function (a) { return a.asset; });
+    return state.config ? state.config.assets : [];
+  }
+  function pairInfo(asset) { return (state.pairs && asset && state.pairs[asset]) || null; }
+  function payoutPct(p) { return Math.round(p * 100) + '%'; }
+
+  function refreshPairs() {
+    return api('/api/pairs').then(function (d) {
+      state.pairs = {};
+      (d.pairs || []).forEach(function (p) { state.pairs[p.asset] = p; });
+      state.pairList = d.pairs || [];
+      state.pairsError = d.error;
+      renderPairTabs();
+      renderManual();
+      if (!$('#pair-picker').hidden) renderPicker();
+    }).catch(function () {});
+  }
+
+  // "ao vivo" só quando o preço está chegando de verdade.
+  function chartLiveText() {
+    var s = state.status, asset = focusAsset();
+    if (!s || !asset) return 'horário de Brasília';
+    var botLive = s.status === 'rodando' && (s.assets || []).some(function (a) { return a.asset === asset && !a.error; });
+    var w = s.watch && s.watch.asset === asset ? s.watch : null;
+    var text = botLive || (w && w.state === 'ao_vivo') ? 'ao vivo'
+      : w && w.state === 'carregando' ? 'carregando ' + asset + '…'
+      : w && w.state === 'sem_conexao' ? 'sem conexão com a IQ: tentando de novo'
+      : 'parado: últimas velas guardadas';
+    var p = pairInfo(asset);
+    if (p && !p.open) text += ' · fechado para binária agora';
+    return text + ' · horário de Brasília';
+  }
+
+  function renderPairTabs() {
+    var el = $('#pair-tabs');
+    if (!el) return;
+    $('#chart-sub').textContent = chartLiveText();
+    var current = focusAsset();
+    var bot = botAssets();
+    var recent = state.recentPairs.filter(function (a) { return bot.indexOf(a) < 0; });
+    if (current && bot.indexOf(current) < 0 && recent.indexOf(current) < 0) recent.unshift(current);
+    var armed = {};
+    ((state.status && state.status.assets) || []).forEach(function (a) { if (a.armed) armed[a.asset] = true; });
+    function tab(asset, removable) {
+      var p = pairInfo(asset), on = asset === current;
+      // Fora da lista da IQ = sem binária de até 5 min nesse par agora.
+      var pay = p ? (p.open ? (p.payout != null ? payoutPct(p.payout) : '') : 'fechado') : (state.pairList.length ? 'sem binária' : '');
+      var title = p ? p.label + (p.open ? '' : ' · fechado para binária agora') : asset;
+      return '<span class="pair-tab' + (on ? ' on' : '') + ((p ? !p.open : state.pairList.length) ? ' closed' : '') + '">' +
+        '<button type="button" data-pair="' + esc(asset) + '" aria-pressed="' + on + '" title="' + esc(title) + '">' +
+        (armed[asset] ? '<span class="armed-dot" title="entrada armada"></span>' : '') + esc(asset) +
+        (pay ? '<span class="pt-pay">' + pay + '</span>' : '') + '</button>' +
+        (removable && !on ? '<button type="button" class="pt-x" data-unpin="' + esc(asset) + '" aria-label="Tirar ' + esc(asset) + ' das abas">×</button>' : '') +
+        '</span>';
+    }
+    var html = (bot.length ? '<span class="pt-cap">Bot</span>' + bot.map(function (a) { return tab(a, false); }).join('') : '') +
+      (recent.length ? '<span class="pt-cap">Olhando</span>' + recent.map(function (a) { return tab(a, true); }).join('') : '') +
+      '<button type="button" class="pt-all" id="pt-all">+ Todos os pares</button>';
+    if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+  }
+
+  function choosePair(asset) {
+    asset = normalizeAsset(asset);
+    closePicker();
+    if (!asset) return;
+    if (botAssets().indexOf(asset) < 0) {
+      state.recentPairs = [asset].concat(state.recentPairs.filter(function (a) { return a !== asset; })).slice(0, RECENT_MAX);
+      saveStored('botbene-recent-pairs', state.recentPairs);
+    }
+    saveStored('botbene-focus', asset);
+    state.manualError = null;
+    focusOn(asset).catch(function (err) { showBanner(err.message); });
+  }
+  function focusOn(asset) {
+    return api('/api/bot/focus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asset: asset }) })
+      .then(function (s) { renderStatus(s); state.chartKey = null; refreshChart(); });
+  }
+  function unpinPair(asset) {
+    state.recentPairs = state.recentPairs.filter(function (a) { return a !== asset; });
+    saveStored('botbene-recent-pairs', state.recentPairs);
+    renderPairTabs();
+  }
+  // Ao abrir o painel (ou o servidor voltar): o par da tela fica ao vivo mesmo com o bot parado.
+  function ensureWatching() {
+    var s = state.status;
+    if (!s || s.status === 'parando') return;
+    var asset = s.asset || loadStored('botbene-focus', null) || (state.chartData && state.chartData.asset) || botAssets()[0];
+    if (!asset) return;
+    var botHasIt = s.status === 'rodando' && (s.assets || []).some(function (a) { return a.asset === asset && !a.error; });
+    if (botHasIt || (s.watch && s.watch.asset === asset)) return;
+    focusOn(asset).catch(function () {});
+  }
+
+  function openPicker() {
+    $('#pair-picker').hidden = false;
+    $('#pp-search').value = '';
+    renderPickerCats();
+    renderPicker();
+    $('#pp-search').focus();
+    refreshPairs();
+  }
+  function closePicker() {
+    var el = $('#pair-picker');
+    if (el.hidden) return false;
+    el.hidden = true;
+    return true;
+  }
+  function renderPickerCats() {
+    $('#pp-cats').innerHTML = PAIR_CATS.map(function (c) {
+      return '<button type="button" data-cat="' + esc(c) + '" aria-pressed="' + (c === state.pickerCat) + '">' + esc(c) + '</button>';
     }).join('');
-    if (sel.dataset.opts !== opts) { sel.innerHTML = opts; sel.dataset.opts = opts; }
-    if (document.activeElement !== sel) sel.value = s.asset;
+  }
+  function knownPairs() {  // sem conexão com a IQ: os pares de sempre, sem payout
+    return DEFAULT_PAIRS.concat(OTC_PAIRS).map(function (a) {
+      return { asset: a, label: a, category: 'Moedas', payout: null, open: null, reason: null };
+    });
+  }
+  function squash(text) { return String(text).toUpperCase().replace(/[\s/.()-]/g, ''); }
+  function renderPicker() {
+    var all = state.pairList.length ? state.pairList : knownPairs();
+    var q = squash($('#pp-search').value.trim());
+    var onlyOpen = $('#pp-open').checked;
+    var bot = botAssets(), current = focusAsset();
+    var items = all.filter(function (p) {
+      if (state.pickerCat !== 'Todos' && p.category !== state.pickerCat) return false;
+      if (onlyOpen && p.open === false) return false;
+      return !q || squash(p.asset + ' ' + p.label).indexOf(q) >= 0;
+    }).sort(function (a, b) {
+      var ab = bot.indexOf(a.asset) >= 0, bb = bot.indexOf(b.asset) >= 0;
+      if (ab !== bb) return ab ? -1 : 1;
+      if (!!a.open !== !!b.open) return a.open ? -1 : 1;
+      return (b.payout || 0) - (a.payout || 0) || a.asset.localeCompare(b.asset);
+    });
+    var open = all.filter(function (p) { return p.open; }).length;
+    $('#pp-note').textContent = state.pairsError
+      ? 'Sem conexão com a IQ agora: mostrando os pares de sempre, sem payout.'
+      : (state.pairList.length ? intFmt.format(open) + ' pares abertos agora, de ' + intFmt.format(all.length) + '.' : 'Carregando a lista da IQ…');
+    $('#pp-list').innerHTML = items.length ? items.map(function (p) {
+      var right = p.open === false ? '<span class="pp-closed">fechado</span>' : (p.payout != null ? '<span class="pp-pay">' + payoutPct(p.payout) + '</span>' : '');
+      return '<li><button type="button" data-pair="' + esc(p.asset) + '"' + (p.asset === current ? ' aria-current="true"' : '') + '>' +
+        '<span class="pp-name">' + esc(p.asset) + (bot.indexOf(p.asset) >= 0 ? ' <span class="pp-tag">bot</span>' : '') + '</span>' +
+        '<span class="pp-label">' + esc(p.label !== p.asset ? p.label : '') + '</span>' + right + '</button></li>';
+    }).join('') : '<li class="empty">Nenhum par com esse filtro.</li>';
+  }
+
+  // ------------------------------------------------------------------ entrada manual
+  // Os stops e os filtros do bot não valem aqui: só o que a IQ exige (par aberto, valor e expiração do par).
+  function fmtAmount(v) { return unitsFmt.format(v); }
+  function manualAmount() {
+    var raw = String($('#m-amount').value).trim();
+    // "1.000,50" (com vírgula, o ponto separa milhar) ou "2.5" (sem vírgula, o ponto é decimal)
+    if (raw.indexOf(',') >= 0) raw = raw.replace(/\./g, '').replace(',', '.');
+    var v = parseFloat(raw);
+    return isFinite(v) ? Math.round(v * 100) / 100 : NaN;
+  }
+  // Mesma regra da IQ: faltando 30 s ou menos para virar o minuto, vale o minuto seguinte.
+  function expiryFor(now, minutes) {
+    var end = (Math.floor(now / 60) + 1) * 60;
+    if (end - now <= 30) end += 60;
+    return end + 60 * (minutes - 1);
+  }
+  function manualBlock(asset, p, amount) {
+    var s = state.status;
+    if (!asset) return 'Escolha um par acima do gráfico.';
+    if (s && s.status === 'reconectando') return 'O bot está reconectando à IQ: espere alguns segundos.';
+    if (!p) return state.pairsError ? 'Sem conexão com a IQ agora.' : (state.pairs ? asset + ' não está na lista de binárias da IQ.' : 'Carregando a lista de pares…');
+    if (!p.open) return p.reason || asset + ' está fechado para binária agora.';
+    if (!isFinite(amount) || amount <= 0) return 'Digite o valor da entrada.';
+    if (p.min != null && amount < p.min) return 'Valor mínimo neste par: ' + fmtMoney(p.min) + '.';
+    if (p.max != null && amount > p.max) return 'Valor máximo neste par: ' + fmtMoney(p.max) + '.';
+    return '';
+  }
+  function manualOrderText(o) {
+    var st = orderState(o);
+    var money = o.profit != null && st.kind === 'sent' && o.status !== 'aberta' ? ' ' + fmtMoney(o.profit, true) : '';
+    return '<div class="m-last ' + (st.kind === 'fail' ? 'bad' : (st.cls || '')) + '">' + dirHtml(o.direction) + ' ' + esc(o.asset) + ' ' + fmtMoney(o.amount) +
+      ' · ' + esc(st.label) + (st.detail ? ' · ' + esc(st.detail) : '') + money +
+      (o.status === 'aberta' && o.expires_at ? ' · vence ' + clockFmt.format(new Date(o.expires_at * 1000)) : '') +
+      (st.kind === 'fail' && o.error ? ': ' + esc(o.error) : '') + '</div>';
+  }
+  function renderManual() {
+    var card = $('#manual-card');
+    if (!card) return;
+    var asset = focusAsset(), p = pairInfo(asset);
+    var real = isReal();
+    card.classList.toggle('real', real);
+    $('#m-acct').textContent = real ? 'CONTA REAL' : 'CONTA DEMO';
+    $('#m-asset').textContent = asset || '—';
+    $('#m-payout').textContent = p && p.payout != null ? payoutPct(p.payout) : '—';
+    var exps = p && p.expiries && p.expiries.length ? p.expiries : [1, 2, 3, 4, 5];
+    var minutes = exps.indexOf(state.manualMinutes) >= 0 ? state.manualMinutes : exps[0];
+    var expHtml = exps.map(function (m) {
+      return '<button type="button" data-min="' + m + '" aria-pressed="' + (m === minutes) + '">' + m + ' min</button>';
+    }).join('');
+    var expEl = $('#m-exp');
+    if (expEl.dataset.html !== expHtml) { expEl.innerHTML = expHtml; expEl.dataset.html = expHtml; }
+    var input = $('#m-amount');
+    if (!input.value && document.activeElement !== input) {
+      input.value = fmtAmount(state.manualAmount != null ? state.manualAmount : (state.config ? state.config.stake : 2));
+    }
+    var amount = manualAmount();
+    $('#m-win').textContent = p && p.payout != null && isFinite(amount) && amount > 0 ? 'se ganhar: ' + fmtMoney(amount * p.payout, true) : '';
+    var why = manualBlock(asset, p, amount);
+    $('#m-call').disabled = $('#m-put').disabled = !!why || state.manualSending;
+    var last = state.manualLastId != null ? state.ordersById[state.manualLastId] : null;
+    var msg = state.manualSending ? '<div class="m-last">Enviando…</div>'
+      : state.manualError ? '<div class="m-last bad">✗ ' + esc(state.manualError) + '</div>'
+      : last ? manualOrderText(last) : '';
+    if (why) msg = '<div class="m-why">' + esc(why) + '</div>' + msg;
+    var msgEl = $('#m-msg');
+    if (msgEl.dataset.html !== msg) { msgEl.innerHTML = msg; msgEl.dataset.html = msg; }
+    updateManualClock();
+    renderManualToday();
+  }
+  function manualMinutesNow() {
+    var b = document.querySelector('#m-exp button[aria-pressed="true"]');
+    return b ? Number(b.dataset.min) : 1;
+  }
+  function updateManualClock() {
+    var el = $('#m-expiry');
+    if (!el) return;
+    var now = serverNow(), end = expiryFor(now, manualMinutesNow());
+    var left = Math.max(0, Math.round(end - now));
+    el.textContent = 'vence ' + clockFmt.format(new Date(end * 1000)) + ' · faltam ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+  }
+  function renderManualToday() {
+    var start = Math.floor((Date.now() / 1000 - 10800) / 86400) * 86400 + 10800;  // meia-noite de Brasília
+    var list = Object.keys(state.ordersById).map(function (k) { return state.ordersById[k]; }).filter(function (o) {
+      return o.strategy === MANUAL && o.requested_at >= start && orderState(o).kind === 'sent';
+    });
+    var el = $('#m-today');
+    if (!list.length) { el.textContent = 'Nenhuma entrada manual hoje.'; return; }
+    var profit = 0, open = 0, closed = 0;
+    list.forEach(function (o) {
+      if (RESULT_INFO[o.status]) { profit += o.profit || 0; closed += 1; }
+      else if (o.status === 'aberta' || o.status === 'enviando') open += 1;
+    });
+    profit = Math.round(profit * 100) / 100;
+    el.innerHTML = 'Hoje: ' + list.length + (list.length > 1 ? ' manuais' : ' manual') +
+      (closed ? ' · <span class="' + signClass(profit) + '">' + fmtMoney(profit, true) + '</span>' : '') +
+      (open ? ' · ' + open + (open > 1 ? ' abertas' : ' aberta') : '');
+  }
+  function stepAmount(dir) {
+    var p = pairInfo(focusAsset());
+    var v = manualAmount();
+    if (!isFinite(v)) v = p && p.min != null ? p.min : 1;
+    v = Math.max(p && p.min != null ? p.min : 1, Math.floor(v) + dir);
+    if (p && p.max != null) v = Math.min(p.max, v);
+    $('#m-amount').value = fmtAmount(v);
+    state.manualAmount = v;
+    saveStored('botbene-manual-valor', v);
+    state.manualError = null;
+    renderManual();
+  }
+  function sendManual(direction) {
+    var asset = focusAsset(), p = pairInfo(asset), amount = manualAmount(), minutes = manualMinutesNow();
+    if (state.manualSending || manualBlock(asset, p, amount)) return;
+    state.manualSending = true;
+    state.manualError = null;
+    state.manualAmount = amount;
+    saveStored('botbene-manual-valor', amount);
+    saveStored('botbene-manual-min', minutes);
+    renderManual();
+    api('/api/orders/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ asset: asset, direction: direction, amount: amount, minutes: minutes }) })
+      .then(function (row) { state.ordersById[row.id] = row; state.manualLastId = row.id; })
+      .catch(function (e) { state.manualLastId = null; state.manualError = e.message; })
+      .then(function () { state.manualSending = false; renderManual(); });
   }
 
   // ------------------------------------------------------------------ próxima entrada (apostila)
@@ -453,6 +742,8 @@
       return { pill: 'note', text: 'Só anotada', note: reason ||
         (s.mode === 'sinais' ? 'Modo só sinais' : strategyState(g.strategy) === 'observe' ? 'Estratégia em Observar' : '') };
     }
+    var skipped = find('pulou');  // o score avaliou e não entrou: mostra quais padrões faltaram
+    if (skipped) return { pill: 'none', text: 'Pulou', note: capitalize(skipped.replace(/^pulou:\s*/, '')) };
     var canceled = find('cancelado');
     if (canceled) return { pill: 'none', text: 'Cancelada', note: capitalize(canceled.replace(/^cancelado:\s*/, '')) };
     if (find('não ')) return { text: 'não disparou' };
@@ -495,6 +786,19 @@
           '<div class="armed-top">' + dirHtml(a.direction) + (multi ? '<strong>' + esc(a.asset) + '</strong>' : '') +
             '<span>' + esc(TRIGGER_LABELS[a.trigger] || a.trigger) + '</span>' +
             '<span class="countdown" data-start="' + a.target_ts + '" data-end="' + a.window_end + '"></span></div>';
+        if (a.strategy === SCORE) {
+          var marks = Object.keys(a.confluences || {}).map(function (k) {
+            return '<span class="chip ' + (a.confluences[k] ? 'ok' : 'no') + '">' + (a.confluences[k] ? '✓ ' : '✗ ') + esc(CONF_LABELS[k] || k) + '</span>';
+          }).join('');
+          return head +
+            '<div class="armed-level">Gatilho <strong>' + fmtPrice(a.level_price) + '</strong> <span class="muted">· ' +
+              esc(a.level_sources[0] || '') + '</span></div>' +
+            '<div class="armed-conf">' + marks + '</div>' +
+            '<div class="muted small">Retração no comando com ' + a.score + ' de 4 padrões. Entra ' + (a.direction === 'call' ? 'CALL' : 'PUT') +
+              ' no primeiro toque em ' + esc(a.level_sources.slice(1).join(', ')) + ' nos primeiros ' + a.window_seconds +
+              ' s da vela das ' + fmtTime(a.target_ts) + '.</div>' +
+          '</div>';
+        }
         if (a.strategy === 'retracao_comando') {
           return head +
             '<div class="armed-level">Gatilho <strong>' + fmtPrice(a.level_price) + '</strong> <span class="muted">· ' +
@@ -739,7 +1043,8 @@
     var risk = state.status && state.status.risk;
     var stake = a.demo ? fmtMoney(2) : risk ? fmtMoney(risk.next_stake) + (risk.gale_level ? ' (gale ' + risk.gale_level + ')' : '') : '—';
     var call = a.direction === 'call';
-    var verb = a.strategy === 'retracao_comando' ? (call ? 'recuar (descer) até o gatilho' : 'recuar (subir) até o gatilho') : 'tocar a marcação';
+    var verb = a.strategy === 'retracao_comando' || a.strategy === SCORE
+      ? (call ? 'recuar (descer) até o gatilho' : 'recuar (subir) até o gatilho') : 'tocar a marcação';
     var mode = a.demo ? 'EXEMPLO · não envia ordem' : a.auto ? 'automático com veto' : 'aprovação';
     var buttons;
     if (a.status === 'aprovado') {
@@ -751,6 +1056,7 @@
     }
     return '<div class="ab-head"><span class="dir big">' + (call ? '▲ CALL' : '▼ PUT') + '</span><strong>' + esc(a.asset) + '</strong></div>' +
       '<div class="muted small">' + esc(label(a.strategy)) + ' · <span class="tag">' + esc(mode) + '</span></div>' +
+      (a.strategy === SCORE && a.setup ? '<div class="muted small">' + esc(capitalize(a.setup)) + '</div>' : '') +
       '<div class="ab-clock"><span class="clock" data-deadline="' + a.deadline + '">—</span><span class="clock-sub">para a janela de ' +
         a.window_seconds + ' s fechar</span></div>' +
       '<dl class="ab-facts">' +
@@ -908,12 +1214,14 @@
     var real = chosen === 'REAL';
     root().classList.toggle('real-mode', real);
     $('#real-badge').hidden = !real;
+    $('#chart-real-badge').hidden = !real;  // com o gráfico expandido, a barra de cima some: o aviso da conta real não
     var mini = $('#acct-mini');
     mini.textContent = real ? 'R' : 'D';
     mini.className = 'acct-mini' + (real ? ' real' : '');
     $('#side-mini').title = (real ? 'Conta REAL' : 'Conta demo') + (info && info.balance != null ? ' · saldo ' + fmtMoney(info.balance) : '') +
       (state.connected ? ' · servidor conectado' : ' · sem conexão');
     $('#orders-title').textContent = real ? 'Ordens na conta REAL' : 'Ordens na conta demo';
+    renderManual();
     var el = $('#acct-balance');
     if (!info) { el.textContent = 'Saldo —'; return; }
     if (info.error) { el.textContent = 'Sem conexão com a IQ'; el.title = info.error; return; }
@@ -1014,12 +1322,15 @@
         var money = o.profit != null && st.kind !== 'fail' ? ' ' + fmtMoney(o.profit, true) : '';
         var profit = st.detail ? '<div class="oc-res ' + (st.cls || '') + '">' + esc(st.detail + money) + '</div>' : '';
         return '<li title="' + esc(o.error || '') + '"><span class="when">' + fmtTime(o.requested_at) + '</span>' +
-          '<div class="what"><div class="line1">' + dirHtml(o.direction) + ' <span class="muted small">' + esc(o.asset) + '</span></div>' +
+          '<div class="what"><div class="line1">' + dirHtml(o.direction) + ' <span class="muted small">' + esc(o.asset) + '</span>' +
+            (o.strategy === MANUAL ? ' <span class="manual-tag">MANUAL</span>' : '') + '</div>' +
           '<div class="line2">' + fmtMoney(o.amount) + (o.account === 'REAL' ? ' · <span class="acct-real">REAL</span>' : ' · demo') +
-            (o.gale ? ' · gale ' + o.gale : '') + (st.kind === 'fail' && o.error ? ' · ' + esc(o.error) : '') + '</div></div>' +
+            (o.gale ? ' · gale ' + o.gale : '') + (o.status === 'aberta' && o.expires_at ? ' · vence ' + fmtTime(o.expires_at) : '') +
+            (st.kind === 'fail' && o.error ? ' · ' + esc(o.error) : '') + '</div></div>' +
           '<div class="right"><span class="oc-pill ' + st.kind + '">' + esc(st.label) + '</span>' + profit + '</div></li>';
       }).join('');
       if (state.status) { renderApprovals(state.status); renderArmed(state.status); }
+      renderManual();
     }).catch(function () {});
   }
 
@@ -1111,80 +1422,6 @@
     // O placar mostra cada estratégia ligada, inclusive as que só observam.
     api('/api/stats?period=hoje&origin=ao_vivo').then(function (st) { renderBoard(st.by_strategy); }).catch(function () {});
     api('/api/signals?period=hoje&origin=ao_vivo&limit=200' + scopeQuery()).then(renderFeed).catch(function () {});
-    refreshValidation();
-  }
-
-  // ------------------------------------------------------------------ placar de validação ao vivo
-  var VAL_LO = 0.30, VAL_HI = 0.80;  // escala da faixa de acerto
-  var VERDICT_INFO = {
-    comecando: { cls: '', icon: '…' }, juntando: { cls: '', icon: '…' }, empate: { cls: 'warn', icon: '≈' },
-    vantagem: { cls: 'good', icon: '✓' }, abaixo: { cls: 'bad', icon: '✗' }, sem_vantagem: { cls: 'bad', icon: '✗' }
-  };
-  function valPos(v) { return Math.max(0, Math.min(100, (v - VAL_LO) / (VAL_HI - VAL_LO) * 100)); }
-  function refreshValidation() { api('/api/validation').then(renderValidation).catch(function () {}); }
-  function renderValidation(data) {
-    var list = (data && data.strategies) || [];
-    var body = $('#val-body');
-    if (!list.length) {
-      $('#val-tag').textContent = 'nenhuma';
-      $('#val-since').textContent = '';
-      body.innerHTML = '<p class="muted">Nenhuma estratégia ligada. Escolha em Configuração.</p>';
-      return;
-    }
-    $('#val-tag').textContent = list.map(function (v) { return v.label; }).join(' · ');
-    var first = list[0];
-    $('#val-since').textContent = first.first_ts
-      ? 'só entradas ao vivo, sem OTC · desde ' + dayFmt.format(new Date(first.first_ts * 1000))
-      : 'só entradas ao vivo, sem OTC, desde o último "zerar histórico"';
-    body.innerHTML = list.map(validationHtml).join('');
-    Array.prototype.forEach.call(body.querySelectorAll('.val-range'), function (el) {
-      var v = list[Number(el.dataset.i)];
-      if (v) tipData.set(el, validationTip(v));
-    });
-  }
-  function validationHtml(v, i) {
-    var pct = Math.min(100, v.n / v.target * 100);
-    var need = v.needed[String(v.target)];
-    var info = VERDICT_INFO[v.verdict.code] || VERDICT_INFO.juntando;
-    var days = v.eta_days ? Math.ceil(v.eta_days) : 0;
-    var pace = v.per_day
-      ? '~' + intFmt.format(Math.round(v.per_day)) + ' por dia' + (days ? ' · faltam ~' + intFmt.format(days) + (days > 1 ? ' dias' : ' dia') : '')
-      : 'o ritmo por dia aparece depois do primeiro dia';
-    var range = '';
-    if (v.n) {
-      range = '<div class="val-range" tabindex="0" data-i="' + i + '" aria-label="Acerto ' + fmtPct(v.winrate) + ', faixa de ' +
-        fmtPct(v.ci_low) + ' a ' + fmtPct(v.ci_high) + ', empate ' + fmtPct(v.breakeven) + '">' +
-        '<span class="band" style="left:' + valPos(v.ci_low) + '%;width:' + Math.max(1, valPos(v.ci_high) - valPos(v.ci_low)) + '%"></span>' +
-        '<span class="be" style="left:' + valPos(v.breakeven) + '%"><em>empate ' + fmtPct(v.breakeven) + '</em></span>' +
-        (need ? '<span class="need" style="left:' + valPos(need) + '%"><em>meta ' + fmtPct(need) + '</em></span>' : '') +
-        '<span class="dot" style="left:' + valPos(v.winrate) + '%"></span></div>';
-    }
-    var o = v.orders;
-    var orders = o.count
-      ? 'Ordens desta estratégia: ' + intFmt.format(o.count) + ' · resultado <span class="' + signClass(o.profit) + '">' + fmtMoney(o.profit, true) + '</span>'
-      : 'Nenhuma ordem enviada por esta estratégia ainda.';
-    var stats = v.n
-      ? v.wins + ' W · ' + v.losses + ' L' + (v.draws ? ' · ' + v.draws + (v.draws > 1 ? ' empates' : ' empate') : '') +
-        ' · faixa provável ' + fmtPct(v.ci_low) + ' a ' + fmtPct(v.ci_high)
-      : 'sem entradas ao vivo ainda';
-    return '<div class="val-grid">' +
-      '<div class="val-cell"><div class="val-big">' + intFmt.format(v.n) + ' <span class="val-of">de ' + intFmt.format(v.target) + ' entradas</span></div>' +
-        '<div class="meter" role="progressbar" aria-label="Entradas ao vivo" aria-valuemin="0" aria-valuemax="' + v.target + '" aria-valuenow="' + v.n + '">' +
-        '<span style="width:' + pct + '%"></span></div>' +
-        '<div class="muted small">' + pace + '</div></div>' +
-      '<div class="val-cell"><div class="val-big">' + (v.n ? fmtPct(v.winrate) : '—') + ' <span class="val-of">acerto ao vivo</span></div>' +
-        range + '<div class="muted small">' + stats + '</div></div>' +
-      '<div class="val-cell val-verdict ' + info.cls + '">' +
-        '<div class="val-title"><span class="icon" aria-hidden="true">' + info.icon + '</span> ' + esc(v.verdict.title) + '</div>' +
-        '<p class="small">' + esc(v.verdict.detail) +
-        (need && v.n < v.target ? ' Com ' + intFmt.format(v.target) + ' entradas, provar vantagem pede ~' + fmtPct(need) + ' de acerto.' : '') + '</p>' +
-        '<div class="muted small">' + orders + '</div></div>' +
-      '</div>';
-  }
-  function validationTip(v) {
-    return '<strong>' + esc(v.label) + '</strong><br>Acerto ao vivo: ' + fmtPct(v.winrate) + ' (' + v.wins + ' de ' + v.n + ')<br>' +
-      'Faixa provável (95%): ' + fmtPct(v.ci_low) + ' a ' + fmtPct(v.ci_high) + '<br>Empate: ' + fmtPct(v.breakeven) +
-      '<br>A vantagem só está provada quando o começo da faixa passa do empate.';
   }
 
   function renderScope() {
@@ -1230,8 +1467,90 @@
     }).join('');
   }
 
+  function chartLimit() {
+    var since = state.showBacktest && state.retroData && state.retroData.since_ts;
+    if (!since) return CHART_BARS;
+    var tf = (state.chartData && state.chartData.timeframe) || 60;
+    return Math.max(CHART_BARS, Math.min(CHART_BARS_MAX, Math.ceil((serverNow() - since) / tf) + 5));
+  }
   function refreshChart() {
-    return api('/api/chart?limit=240').then(renderChart).then(refreshReading).catch(function () {});
+    return api('/api/chart?limit=' + chartLimit()).then(renderChart).then(refreshReading).then(refreshRetro).catch(function () {});
+  }
+
+  // ------------------------------------------------------------------ retroativo do dia
+  // Conta o que as setas do backtest mostram: só as estratégias ligadas nos botões do gráfico.
+  function refreshRetro() {
+    if (!state.showBacktest) { renderRetro(); return null; }
+    var seq = ++state.retroSeq;
+    return api('/api/backtest/today').then(function (data) {
+      if (seq !== state.retroSeq) return;
+      state.retroData = data;
+      renderRetro();
+    }).catch(function () {});
+  }
+  function retroScopes(asset) {
+    var s = state.status;
+    var pairs = isBusy(s) && s.assets && s.assets.length ? s.assets.map(function (a) { return a.asset; }) : (state.config ? state.config.assets : []);
+    // OTC e mercado normal não se somam: têm estatística separada.
+    var same = pairs.filter(function (p) { return isOtc(p) === isOtc(asset); });
+    var scopes = asset ? [{ title: asset, assets: [asset] }] : [];
+    if (same.length > 1) scopes.push({ title: same.length + (isOtc(asset) ? ' pares OTC' : ' pares normais'), assets: same });
+    return scopes;
+  }
+  function retroCells(rows) {
+    var t = { wins: 0, losses: 0, draws: 0, profit: 0 };
+    rows.forEach(function (g) { t.wins += g.wins; t.losses += g.losses; t.draws += g.draws; t.profit += g.profit; });
+    var n = t.wins + t.losses;
+    if (!n && !t.draws) return '<td class="num muted">0</td><td class="num muted">—</td><td class="num muted">—</td>';
+    return '<td class="num">' + t.wins + ' W · ' + t.losses + ' L' + (t.draws ? ' · ' + t.draws + ' empate' + (t.draws > 1 ? 's' : '') : '') + '</td>' +
+      '<td class="num">' + (n ? fmtPct(t.wins / n) : '—') + '</td><td class="num ' + signClass(t.profit) + '">' + fmtUnits(t.profit) + '</td>';
+  }
+  function renderRetro() {
+    var el = $('#bt-count');
+    if (!state.showBacktest || !state.retroData) { el.hidden = true; return; }
+    el.hidden = false;
+    var names = shownStrategies().filter(function (n) { return state.visible[n]; });
+    var scopes = retroScopes(state.chartData && state.chartData.asset);
+    var inScopes = {};
+    scopes.forEach(function (sc) { sc.assets.forEach(function (a) { inScopes[a] = true; }); });
+    var groups = state.retroData.groups.filter(function (g) { return inScopes[g.asset] && names.indexOf(g.strategy) >= 0; });
+    if (!groups.length) {
+      el.innerHTML = '<div class="bt-head"><strong>Retroativo de hoje</strong><span class="muted">Nenhuma entrada. O cálculo roda quando o bot inicia.</span></div>';
+      return;
+    }
+    var first = Math.min.apply(null, groups.map(function (g) { return g.first_ts; }));
+    var last = Math.max.apply(null, groups.map(function (g) { return g.last_ts; }));
+    el.innerHTML = '<div class="bt-head"><strong>Retroativo de hoje</strong><span class="muted">primeira às ' + fmtTime(first) + ' · última às ' + fmtTime(last) +
+        ' · calculado ao iniciar o bot; depois disso, as entradas contam como ao vivo</span></div>' +
+      '<div class="table-wrap"><table class="data"><thead><tr><th rowspan="2">Estratégia</th>' +
+      scopes.map(function (sc) { return '<th class="bt-scope" colspan="3">' + esc(sc.title) + '</th>'; }).join('') + '</tr><tr>' +
+      scopes.map(function () { return '<th class="num">W · L</th><th class="num">Acerto</th><th class="num">Resultado</th>'; }).join('') + '</tr></thead><tbody>' +
+      names.map(function (name) {
+        return '<tr><td>' + stratHtml(name) + '</td>' + scopes.map(function (sc) {
+          return retroCells(groups.filter(function (g) { return g.strategy === name && sc.assets.indexOf(g.asset) >= 0; }));
+        }).join('') + '</tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  // ------------------------------------------------------------------ gráfico expandido
+  function setChartExpanded(on) {
+    if (state.chartExpanded === on) return;
+    state.chartExpanded = on;
+    $('#chart-card').classList.toggle('expanded', on);
+    document.documentElement.classList.toggle('chart-open', on);
+    var btn = $('#chart-expand');
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.title = on ? 'Voltar ao painel (Esc)' : 'Só o gráfico, em tela cheia';
+    $('#chart-expand-text').textContent = on ? 'Sair' : 'Expandir';
+    if (on) {
+      // Tela cheia do documento (não só do cartão), para o pedido de aprovação continuar aparecendo por cima.
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().then(function () { state.chartOwnsFullscreen = true; }).catch(function () { /* ocupa a janela inteira mesmo assim */ });
+      }
+    } else if (state.chartOwnsFullscreen) {
+      state.chartOwnsFullscreen = false;
+      if (document.fullscreenElement) document.exitFullscreen().catch(function () {});
+    }
   }
 
   // ------------------------------------------------------------------ leitura do estudo no gráfico
@@ -1346,7 +1665,8 @@
     if (!data.candles || !data.candles.length) {
       candleSeries.setData([]); buySeries.setData([]); sellSeries.setData([]); applyMarkers();
       $('#p-price').textContent = '—';
-      $('#p-price-sub').textContent = 'inicie o bot para ver o gráfico';
+      var w = state.status && state.status.watch;
+      $('#p-price-sub').textContent = w && w.asset === data.asset && w.state !== 'sem_conexao' ? 'carregando as velas…' : 'sem velas deste par ainda';
       renderReading(null);
       return;
     }
@@ -1443,6 +1763,7 @@
     var out = $('#readout');
     if (!param || param.time == null || !param.seriesData) {
       out.textContent = 'Passe o mouse sobre uma vela para ver os detalhes.';
+      out.classList.add('idle');
       return;
     }
     var bar = param.seriesData.get(candleSeries);
@@ -1452,8 +1773,9 @@
     (state.entriesByTime[param.time] || []).forEach(function (o) {
       var outcome = RESULT_INFO[o.status] ? resHtml(o.status) + (o.profit != null ? ' ' + fmtMoney(o.profit, true) : '')
         : esc((ORDER_INFO[o.status] || { text: o.status }).text);
-      html += ' &nbsp;|&nbsp; <strong>ENTRADA</strong> ' + dirHtml(o.direction) + ' ' + fmtPrice(o.price) + ' · ' + fmtMoney(o.amount) +
-        ' · ' + stratHtml(o.strategy) + ' ' + outcome;
+      var manual = o.strategy === MANUAL;
+      html += ' &nbsp;|&nbsp; <strong>' + (manual ? 'MANUAL' : 'ENTRADA') + '</strong> ' + dirHtml(o.direction) + ' ' + fmtPrice(o.price) +
+        ' · ' + fmtMoney(o.amount) + (manual ? '' : ' · ' + stratHtml(o.strategy)) + ' ' + outcome;
     });
     (state.markersByTime[param.time] || []).forEach(function (s) {
       html += ' &nbsp;|&nbsp; ' + stratHtml(s.strategy) + ' ' + dirHtml(s.direction) + ' ' + esc(s.setup) + ' ' + resHtml(s.result);
@@ -1463,6 +1785,7 @@
     });
     html += readingReadout(param.time);
     out.innerHTML = html;
+    out.classList.remove('idle');
   }
 
   function onTick(asset, candle) {
@@ -1487,7 +1810,8 @@
   }
   function renderLineLegend() {
     $('#line-legend').innerHTML =
-      '<span class="key"><strong>ENTRADA CALL / PUT</strong> · ordem enviada, com o preço e o resultado (✓ ✗ …)</span>' +
+      '<span class="key"><strong>ENTRADA CALL / PUT</strong> · ordem enviada pelo bot, com o preço e o resultado (✓ ✗ …)</span>' +
+      '<span class="key"><strong>MANUAL CALL / PUT</strong> · entrada que você fez na mão</span>' +
       '<span class="key">▲▼ pequena · entrada só anotada pela estratégia, sem ordem</span>' +
       (scriptOn('ldp_arrows') && !state.showReading ? '<span class="key">▲ CALL ▼ PUT · script LDP v1.3 (só desenho, não decide entrada)</span>' : '') +
       (scriptOn('wiki_pro') && !state.showReading ? '<span class="key">WIKI CALL / PUT · script WIKI PRO (só desenho, não decide entrada)</span>' : '') +
@@ -1674,6 +1998,8 @@
   function configChanged(cfg) {
     state.config = cfg;
     renderToolbarAssets();
+    renderPairTabs();
+    renderManual();
     syncVisible();
     renderToggles();
     renderLineLegend();
@@ -1682,7 +2008,8 @@
   }
 
   var STRATEGY_NOTES = {
-    retracao_comando: '~54% na pesquisa · ainda sem vantagem comprovada',
+    score_ldp: 'principal · entra com 3 de 4 padrões sobre a retração no comando · regra congelada em 06/11, em validação',
+    retracao_comando: '~54% sozinha · é a base do score',
     ldp_apostila: '48% na pesquisa · não recomendado',
     retracao_lote: 'nova · em pesquisa · pág. 162',
     reversao_forca: 'nova · em pesquisa · vela de força trava na defesa e reverte',
@@ -1766,11 +2093,14 @@
   }
 
   function renderPairChips() {
-    var all = DEFAULT_PAIRS.slice();
-    state.cfgPairs.forEach(function (p) { if (all.indexOf(p) < 0) all.push(p); });
-    $('#cfg-assets').innerHTML = all.map(function (p) {
-      return '<button type="button" class="toggle" data-pair="' + esc(p) + '" aria-pressed="' + (state.cfgPairs.indexOf(p) >= 0 ? 'true' : 'false') + '">' + esc(p) + '</button>';
-    }).join('');
+    function group(title, fixed, otc) {
+      var all = fixed.slice();
+      state.cfgPairs.forEach(function (p) { if (isOtc(p) === otc && all.indexOf(p) < 0) all.push(p); });
+      return '<div><span class="pair-group-title">' + title + '</span><div class="pair-chips">' + all.map(function (p) {
+        return '<button type="button" class="toggle" data-pair="' + esc(p) + '" aria-pressed="' + (state.cfgPairs.indexOf(p) >= 0 ? 'true' : 'false') + '">' + esc(p) + '</button>';
+      }).join('') + '</div></div>';
+    }
+    $('#cfg-assets').innerHTML = group('Mercado normal', DEFAULT_PAIRS, false) + group('OTC', OTC_PAIRS, true);
   }
   function togglePair(p) {
     var i = state.cfgPairs.indexOf(p);
@@ -1894,12 +2224,12 @@
       tip.style.top = Math.min(y + 14, window.innerHeight - r.height - 8) + 'px';
     }
     document.addEventListener('mousemove', function (e) {
-      var t = e.target.closest ? e.target.closest('.bar-row, .col, .val-range') : null;
+      var t = e.target.closest ? e.target.closest('.bar-row, .col') : null;
       if (t) show(t, e.clientX, e.clientY); else tip.hidden = true;
     });
     document.addEventListener('focusin', function (e) {
       var t = e.target;
-      if (t.classList && (t.classList.contains('bar-row') || t.classList.contains('col') || t.classList.contains('val-range'))) {
+      if (t.classList && (t.classList.contains('bar-row') || t.classList.contains('col'))) {
         var b = t.getBoundingClientRect();
         show(t, b.left + b.width / 2, b.bottom);
       }
@@ -1909,6 +2239,7 @@
 
   // ------------------------------------------------------------------ navegação
   function setPage(name) {
+    if (name !== 'painel') setChartExpanded(false);
     state.page = name;
     Array.prototype.forEach.call(document.querySelectorAll('.nav-item'), function (b) {
       if (b.dataset.page === name) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -1957,7 +2288,9 @@
       var reconnect = state.wsWasDown;
       state.wsWasDown = false;
       setConnected(true);
-      if (reconnect) api('/api/status').then(checkVersion).catch(function () {});  // servidor reiniciou: painel novo?
+      if (reconnect) {  // servidor reiniciou: painel novo? e o par da tela volta a ficar ao vivo
+        api('/api/status').then(function (s) { checkVersion(s); renderStatus(s); ensureWatching(); refreshPairs(); }).catch(function () {});
+      }
     };
     ws.onmessage = function (ev) {
       var e = JSON.parse(ev.data);
@@ -1974,6 +2307,7 @@
         if (state.status) { renderApprovals(state.status); renderArmed(state.status); }  // cartão de resultado na hora
         if (state.page === 'painel') refreshOrders();
         if (e.order && state.chartData && e.order.asset === state.chartData.asset) refreshChart();  // marca de ENTRADA na hora
+        renderManual();
         if (['win', 'loss', 'empate'].indexOf(e.order && e.order.status) >= 0) refreshAccount();  // saldo mudou
       }
       else if (e.type === 'signal' || e.type === 'result') { if (state.page === 'painel') refreshTodaySoon(); }
@@ -2040,11 +2374,58 @@
       if (b) chooseAccount(b.dataset.acct);
     });
     $('#assets-text').addEventListener('click', function () { setPage('config'); });
-    $('#focus-asset').addEventListener('change', function (e) {
-      api('/api/bot/focus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ asset: e.target.value }) })
-        .then(function (s) { renderStatus(s); state.chartKey = null; refreshChart(); })
-        .catch(function (err) { showBanner(err.message); });
+    $('#pair-tabs').addEventListener('click', function (e) {
+      var x = e.target.closest('[data-unpin]');
+      if (x) { unpinPair(x.dataset.unpin); return; }
+      if (e.target.closest('#pt-all')) { openPicker(); return; }
+      var b = e.target.closest('[data-pair]');
+      if (b) choosePair(b.dataset.pair);
     });
+    $('#chart-title').addEventListener('click', openPicker);
+    $('#pp-close').addEventListener('click', closePicker);
+    $('#pair-picker').addEventListener('click', function (e) {
+      if (e.target === e.currentTarget) { closePicker(); return; }
+      var b = e.target.closest('[data-pair]');
+      if (b) choosePair(b.dataset.pair);
+    });
+    $('#pp-search').addEventListener('input', renderPicker);
+    $('#pp-search').addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      var first = document.querySelector('#pp-list [data-pair]');
+      if (first) choosePair(first.dataset.pair);
+    });
+    $('#pp-open').addEventListener('change', renderPicker);
+    $('#pp-cats').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-cat]');
+      if (!b) return;
+      state.pickerCat = b.dataset.cat;
+      renderPickerCats();
+      renderPicker();
+    });
+    $('#m-exp').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-min]');
+      if (!b) return;
+      state.manualMinutes = Number(b.dataset.min);
+      saveStored('botbene-manual-min', state.manualMinutes);
+      renderManual();
+    });
+    $('#m-minus').addEventListener('click', function () { stepAmount(-1); });
+    $('#m-plus').addEventListener('click', function () { stepAmount(1); });
+    $('#m-amount').addEventListener('input', function () { state.manualError = null; renderManual(); });
+    $('#m-amount').addEventListener('change', function () {
+      var v = manualAmount();
+      if (isFinite(v) && v > 0) {
+        $('#m-amount').value = fmtAmount(v);
+        state.manualAmount = v;
+        saveStored('botbene-manual-valor', v);
+      }
+      renderManual();
+    });
+    $('#m-amount').addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowUp') { e.preventDefault(); stepAmount(1); } else if (e.key === 'ArrowDown') { e.preventDefault(); stepAmount(-1); }
+    });
+    $('#m-call').addEventListener('click', function () { sendManual('call'); });
+    $('#m-put').addEventListener('click', function () { sendManual('put'); });
     $('#approvals').addEventListener('click', function (e) {
       var btn = e.target.closest('button[data-act]');
       if (btn) { decideApproval(btn.dataset.id, btn.dataset.act, btn); return; }
@@ -2073,6 +2454,12 @@
     });
     document.addEventListener('fullscreenchange', function () {
       $('#btn-fullscreen-text').textContent = document.fullscreenElement ? 'Sair da tela cheia' : 'Tela cheia';
+      if (!document.fullscreenElement) setChartExpanded(false);  // o Esc do navegador sai da tela cheia: o gráfico volta junto
+    });
+    $('#chart-expand').addEventListener('click', function () { setChartExpanded(!state.chartExpanded); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      if (!closePicker()) setChartExpanded(false);  // a lista de pares fecha primeiro
     });
     $('#btn-shutdown').addEventListener('click', shutdown);
     $('#script-toggles').addEventListener('click', function (e) {
@@ -2082,8 +2469,15 @@
       state.visible[n] = !state.visible[n];
       btn.setAttribute('aria-pressed', state.visible[n] ? 'true' : 'false');
       applyMarkers();
+      renderRetro();
     });
-    $('#show-backtest').addEventListener('change', function (e) { state.showBacktest = e.target.checked; applyMarkers(); });
+    $('#show-backtest').addEventListener('change', function (e) {
+      state.showBacktest = e.target.checked;
+      applyMarkers();
+      if (state.showBacktest) { refreshRetro().then(refreshChart); return; }  // precisa do início do dia para saber quantas velas pedir
+      renderRetro();
+      refreshChart();
+    });
     $('#show-reading').checked = state.showReading;
     $('#show-reading').addEventListener('change', function (e) {
       state.showReading = e.target.checked;
@@ -2110,13 +2504,16 @@
     }).catch(function () {});
 
     var fromHash = location.hash.replace('#', '');
-    loadConfig(fromHash === 'config');
+    var configLoaded = loadConfig(fromHash === 'config');
     refreshAccount();
     refreshOrders();  // o cartão de resultado precisa saber das ordens mesmo fora do Painel
+    refreshPairs();
     setInterval(refreshAccount, 60000);
+    setInterval(refreshPairs, 60000);  // payout e pares abertos
     api('/api/status').then(function (s) {
       checkVersion(s);
       renderStatus(s);
+      configLoaded.then(ensureWatching);  // sem o bot, o par da tela fica ao vivo do mesmo jeito
       if (PAGE_TITLES[fromHash]) setPage(fromHash); else refreshCurrent();
       // Endereço terminado em #exemplo abre um pedido de exemplo (só na tela, não envia nada): usado para conferir o visual.
       if (fromHash === 'exemplo') setTimeout(showDemoApproval, 2500);
@@ -2126,7 +2523,7 @@
       updateStatusSub();
       api('/api/status').then(function (s) { checkVersion(s); renderStatus(s); }).catch(function () {});
     }, 30000);
-    setInterval(function () { updateCountdowns(); updateApprovalClocks(); }, 1000);
+    setInterval(function () { updateCountdowns(); updateApprovalClocks(); updateManualClock(); }, 1000);
   }
 
   document.addEventListener('DOMContentLoaded', init);

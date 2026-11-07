@@ -22,12 +22,18 @@ class FakeBroker(Broker):
         self.tickets: list[OrderTicket] = []
         self.results: dict[int, OrderResult] = {}  # resultado por ordem (padrão: win com 80%)
         self.refuse_orders: str | None = None
+        self.pair_list: list[dict] = []
+        self.buy_minutes: list[int] = []
 
     def connect(self) -> None: ...
+
+    def pairs(self):
+        return self.pair_list
 
     def buy(self, asset, direction, amount, minutes=1):
         if self.refuse_orders:
             raise BrokerError(self.refuse_orders)
+        self.buy_minutes.append(minutes)
         now = self.server_time()
         t = OrderTicket(len(self.tickets) + 1, asset, direction, amount, self.account.value, now, int(now))
         self.tickets.append(t)

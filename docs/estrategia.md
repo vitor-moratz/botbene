@@ -7,7 +7,8 @@
 
 | Estratégia | Papel no bot | Quando entra | Acerto em dados que ela nunca viu |
 |---|---|---|---|
-| **Apostila · retração no comando** | **Principal.** Mostra o pedido no painel e manda a ordem (no modo recomendado, sozinha, com direito a veto) | Dentro da vela seguinte ao comando, nos primeiros 15 s | **~54%** (440 entradas) · empate 54,3% |
+| **Score LDP v1 (combo)** | **Principal desde 06/11/2026.** Junta as cinco estratégias de dentro da vela e quatro padrões; entra com 3 de 4 sobre a retração no comando e, quando pula, diz na tela o que faltou (seção 2d) | Dentro da vela seguinte ao comando, nos primeiros 15 s | Em validação a partir de 07/11. Antes de congelar: 62,9% em 89 entradas fora do período de escolha |
+| Apostila · retração no comando | Base do score. Sozinha, fica em Observar | Dentro da vela seguinte ao comando, nos primeiros 15 s | **~54%** (440 entradas) · empate 54,3% |
 | Apostila · marcações | Desligada por padrão; pode observar ou operar, mas não é recomendada | Dentro da vela, nos primeiros 15 s | 48% (562) |
 | LDP v1.3 (script da IQ) | Script: só desenho no gráfico | No bot, não entra | 49,1% (97 mil) |
 | LDP v1.3 + regra das linhas | Só na ferramenta de pesquisa | No bot, não entra | 48,8% (64 mil) |
@@ -25,7 +26,7 @@ Termos usados aqui:
 - **ATR**: a régua do tamanho normal da vela naquele momento. É a média da amplitude (máxima − mínima) das 14 velas antes da vela analisada. Muda com o horário: de madrugada é bem menor que no horário de Londres e Nova York.
 - **Pares `-op`**: na IQ, a binária dos pares normais é o instrumento com final `-op` (ex.: `EURUSD-op`). É ele que o bot lê e opera.
 
-## A. Retração no comando (estratégia principal)
+## A. Retração no comando (base do score)
 
 ### A ideia, na apostila
 
@@ -338,6 +339,40 @@ Camada que lê o gráfico como as análises das págs. 162-220: **"Identifique u
 
 **Conclusão:** as três, como foram escritas, **ficam abaixo do empate nos dois períodos** e não devem operar. Mais confluências não melhoraram o acerto. Os grupos que pareceram bons num período não se repetiram no outro: espaço na reversão A deu 54,1% na primeira olhada e 50,3% na confirmação; primeiro registro na reversão B deu 48,5% e depois 58,2%. Isso é oscilação, não vantagem. Elas também entram demais (a retração no lote, ~95 entradas por par por dia), o que mostra que a leitura automática ainda não é seletiva como a do estudo. Antes de qualquer versão nova, a leitura precisa ser conferida no gráfico por quem opera o estudo.
 
+## 2d. Score LDP v1: o combo (`backend/app/strategies/score.py`)
+
+**A ideia (do dono do bot).** Em vez de escolher uma estratégia contra a outra, todas rodam juntas e montam um score. Quando os padrões positivos coincidem, entra; quando não, pula e diz na tela o porquê. O foco é acerto: o gale fica de fora até o score provar acerto alto de forma consistente.
+
+**Regras congeladas em 06/11/2026.** Nenhum número muda olhando o resultado. Uma melhoria vira outra versão (`score_ldp_v2`), com as regras escritas antes de medir, e só é comparada em dados posteriores ao congelamento dela.
+
+1. A cada vela fechada, as cinco estratégias de dentro da vela (retração no comando, marcações, retração no lote, reversão A e B) armam ou não. Cada lado ganha pontos: +1 por estratégia armada, +1 por confluência do estudo (seção 2c), +1 se a vela não rompeu a máxima/mínima das 10 anteriores, +1 em topos e fundos, −1 em consolidação (pág. 223), −1 por estratégia armada do outro lado. Fica o lado com mais pontos; empate pula.
+2. **Base:** a retração no comando precisa estar armada no lado escolhido (pág. 27, 162).
+3. **Quatro padrões, 1 ponto cada; entra com 3 ou 4:**
+   - marcação de comando ou de taxa dividida (pág. 26, 41);
+   - o comando não rompeu a máxima (CALL) ou a mínima (PUT) das 10 velas anteriores;
+   - espaço de pelo menos 0,8 ATR até a próxima barreira contrária (pág. 177, 199, 201);
+   - recorrência: o combo acertou pelo menos 6 das últimas 10 entradas naquele par. Não vem da apostila: é desempenho recente, e a tela mostra separado.
+4. **Gatilho:** o primeiro toque, nos primeiros 15 s da vela seguinte, em qualquer marcação das estratégias do lado escolhido. GAP aborta (pág. 28). Vencimento no fim da vela.
+
+A recorrência conta todas as entradas do combo no par (o lado escolhido em cada vela, entre ou não). Por isso o score vê os primeiros 15 s de toda vela: na carga do bot e na pesquisa, pelas velas de 5 s (o bot busca desde 2 h antes da meia-noite); ao vivo, pela vela em formação.
+
+**Na tela.** Quando arma, o cartão mostra os quatro padrões com ✓ e ✗. Quando um comando aparece e o score pula, a linha "Pulou" em **Últimos setups** diz quantos padrões passaram e quais faltaram, por exemplo: `Pulou · 2 de 4 · ✓ marcação · ✗ comando dentro das 10 velas · ✓ espaço · ✗ recorrência (5 de 10)`.
+
+**Como foi escolhido (06/11/2026).** Entradas com a retração no comando, 12 pares `-op` e 8 OTC, payout de 84%, empate em 54,3%:
+
+| Período | Entradas | Acerto |
+|---|---|---|
+| `-op` até 03/11 (usado para escolher os padrões) | 128 | 71,1% |
+| `-op` 04 a 06/11 | 40 | 62,5% |
+| OTC 27/10 a 06/11 | 49 | 63,3% |
+| Fora do período de escolha, somado | 89 | **62,9%** (faixa 52,5–72,2%) |
+
+O código do bot reproduz essa medição entrada por entrada (as mesmas 223 entradas, com os mesmos resultados). Somar todos os pontos com o mesmo peso **não** funcionou (~51% em qualquer nota); o que separou foi partir da retração no comando e exigir os padrões a favor: 0 padrão 45%, 1 padrão 52%, 2 padrões 55-60%, 3 padrões 71-73% (poucas entradas).
+
+**Gale.** Testado com 1 e 2 níveis, na vela seguinte e na próxima oportunidade (qualquer par, mesmo par, mesmo par e lado, entrada forte). A entrada depois de uma perda acerta igual às outras (71,4% em 70 contra 65,3%), então o gale só aumenta a aposta: não muda o acerto e atrapalha a leitura. Fica desligado até o score provar acerto alto de forma consistente.
+
+**Validação.** `python -m app.tools.score_check` mede o score com a mesma classe do bot, nas velas de 5 s guardadas a partir de 07/11/2026, e mostra o placar ao vivo. Volume esperado: ~75 entradas por semana nos 12 pares `-op` e ~32 nos 8 OTC. Se o acerto real for 65%, ~85 entradas já bastam para ficar acima do empate mesmo no pior caso; para afirmar mais de 60%, ~350.
+
 ## 3. Mapa de níveis (`backend/app/ldp/levels.py`)
 
 - **Papel pela posição:** marcação abaixo do fechamento é suporte, acima é resistência.
@@ -428,4 +463,4 @@ O que isso mostra:
 - Filtro candidato "comando que não rompeu a máxima/mínima das 10 velas anteriores" (69% / 63% com ~50 entradas cada): testar em semanas novas de dados.
 - Pausa automática por desempenho.
 
-(Já feito: vários pares ao mesmo tempo; placar de validação ao vivo no Painel, com a meta de 200 entradas; payout mínimo e horário de operação.)
+(Já feito: vários pares ao mesmo tempo; payout mínimo e horário de operação.)

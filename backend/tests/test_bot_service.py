@@ -165,6 +165,7 @@ def test_varios_pares_ao_mesmo_tempo(tmp_path):
     assert [a["asset"] for a in snap["assets"]] == ["EURUSD", "GBPUSD"] and snap["asset"] == "EURUSD"
     bot.set_focus("GBPUSD")
     assert bot.snapshot()["asset"] == "GBPUSD" and bot.chart(100)["asset"] == "GBPUSD"
+    bot.watcher.stop()
 
 
 def armed_for(bot, candle, level, strategy="ldp_apostila", direction=Direction.CALL):

@@ -88,7 +88,8 @@ def test_estados_e_scripts_pela_tela(tmp_path):
     with make_client(tmp_path) as client:
         body = client.get("/api/config").json()
         assert body["strategies"] == {"retracao_comando": "operate"}
-        assert body["strategy_names"] == ["retracao_comando", "ldp_apostila", "retracao_lote", "reversao_forca", "reversao_indecisao"]
+        assert body["strategy_names"] == ["score_ldp", "retracao_comando", "ldp_apostila", "retracao_lote", "reversao_forca",
+                                          "reversao_indecisao"]
         assert body["chart_scripts"] == {"ldp_lines": True, "ldp_arrows": True, "wiki_pro": False}
         r = client.put("/api/config", json={"strategies": {"retracao_comando": "observe", "ldp_apostila": "off"},
                                             "chart_scripts": {"ldp_arrows": False}})
@@ -118,7 +119,7 @@ def test_testar_conexao_e_rotas_novas(tmp_path):
         s = wait_status(client, "rodando")
         assert [a["asset"] for a in s["assets"]] == ["EURUSD", "GBPUSD"]
         assert client.post("/api/bot/focus", json={"asset": "gbpusd"}).json()["asset"] == "GBPUSD"
-        assert client.post("/api/bot/focus", json={"asset": "USDJPY"}).status_code == 404
+        assert client.post("/api/bot/focus", json={"asset": "USD JPY;"}).status_code == 422
         assert client.get("/api/chart?asset=GBPUSD&limit=100").json()["asset"] == "GBPUSD"
         client.post("/api/bot/stop")
         wait_status(client, "parado")

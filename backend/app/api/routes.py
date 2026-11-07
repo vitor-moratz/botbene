@@ -13,13 +13,16 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from app.analytics.stats import breakeven, summarize, total
 from app.analytics.timeline import BRT, GRANULARITY, cumulative, period_start, timeline
 from app.analytics.validation import summarize_validation
+from app.broker.base import BrokerError
 from app.market.candle import is_otc, normalize_asset, valid_asset
 from app.service.bot import BotBusyError, BotService
+from app.service.orders import DuplicateOrderError
 from app.strategies import STRATEGY_LABELS, STRATEGY_ORDER
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 Period = Literal["hoje", "7d", "mes", "geral"]
+STOP_WAIT_SECONDS = 2  # o botão já mostra "Parando…"; o "parado" chega depois pelo websocket
 
 
 def _bot(request: Request) -> BotService:
@@ -53,6 +56,18 @@ class StartBody(BaseModel):
 
 class FocusBody(BaseModel):
     asset: str
+
+
+class ManualOrderBody(BaseModel):
+    asset: str
+    direction: Literal["call", "put"]
+    amount: float = Field(gt=0, le=1_000_000)
+    minutes: int = Field(ge=1, le=5)
+
+    @field_validator("asset")
+    @classmethod
+    def normalize(cls, v: str) -> str:
+        return _norm_asset(v)
 
 
 class ConfigPatch(BaseModel):
@@ -105,11 +120,28 @@ def start(body: StartBody, request: Request) -> dict:
 @router.post("/bot/focus")
 def focus(body: FocusBody, request: Request) -> dict:
     bot = _bot(request)
-    try:
-        bot.set_focus(normalize_asset(body.asset))
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Esse ativo não está no bot agora") from exc
+    asset = normalize_asset(body.asset)
+    if not valid_asset(asset):
+        raise HTTPException(status_code=422, detail=f"Par inválido: {asset}")
+    bot.set_focus(asset)
     return bot.snapshot()
+
+
+@router.get("/pairs")
+def pairs(request: Request) -> dict:
+    return _bot(request).pairs_view()
+
+
+@router.post("/orders/manual")
+def manual_order(body: ManualOrderBody, request: Request) -> dict:
+    try:
+        return _bot(request).manual_order(body.asset, body.direction, body.amount, body.minutes)
+    except (BotBusyError, DuplicateOrderError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except BrokerError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/approvals/{approval_id}/{decision}")
@@ -195,7 +227,7 @@ def test_config(request: Request) -> dict:
 @router.post("/bot/stop")
 def stop(request: Request) -> dict:
     bot = _bot(request)
-    bot.stop()
+    bot.stop(wait=STOP_WAIT_SECONDS)
     return bot.snapshot()
 
 
@@ -256,6 +288,21 @@ def validation(request: Request) -> dict:
         summarize_validation(name, STRATEGY_LABELS.get(name, name), signals(name), orders, default_payout)
         for name in names
     ]}
+
+
+@router.get("/backtest/today")
+def backtest_today(request: Request) -> dict:
+    """Retroativo de hoje, por par e estratégia: o painel soma conforme o que está à vista no gráfico."""
+    since = period_start("hoje")
+    by_key: dict[tuple[str, str], list[dict]] = {}
+    for row in request.app.state.db.resolved_signals(origin="backtest", since_ts=since):  # em ordem de horário
+        by_key.setdefault((row["asset"], row["strategy"]), []).append(row)
+    groups = []
+    for (asset, strategy), rows in by_key.items():
+        t = total(rows)
+        groups.append({"asset": asset, "strategy": strategy, "wins": t.wins, "losses": t.losses, "draws": t.draws,
+                       "profit": t.profit, "first_ts": rows[0]["entry_ts"], "last_ts": rows[-1]["entry_ts"]})
+    return {"since_ts": since, "groups": groups}
 
 
 def _hour_brt(ts: int) -> str:

@@ -76,8 +76,8 @@
       <div class="title-wrap"><h1 id="page-title">Painel</h1><span class="real-badge" id="real-badge" hidden>CONTA REAL · dinheiro de verdade</span></div>
       <div class="bot-control">
         <div class="field">
-          <span class="field-label">Pares</span>
-          <button class="link-btn" id="assets-text" title="Escolher os pares na Configuração">—</button>
+          <span class="field-label">O bot acompanha</span>
+          <button class="link-btn" id="assets-text" title="Os pares que o bot opera ficam na Configuração. Para só olhar outro par, use as abas acima do gráfico.">—</button>
         </div>
         <div class="field">
           <span class="field-label">Vela</span>
@@ -121,45 +121,75 @@
           </div>
         </div>
 
-        <!-- Placar de validação: a estratégia principal está provando vantagem ao vivo? -->
-        <div class="card validation-card" id="validation" aria-live="polite">
-          <div class="card-head">
-            <h2>Validação ao vivo <span class="tag" id="val-tag">estratégia principal</span></h2>
-            <span class="muted small" id="val-since"></span>
-          </div>
-          <div id="val-body"><p class="muted">Carregando…</p></div>
-        </div>
-
         <div class="grid-main">
-          <div class="card chart-card">
+          <div class="card chart-card" id="chart-card">
             <div class="card-head">
               <div>
-                <h2 id="chart-title">Gráfico</h2>
-                <div class="muted small" id="chart-sub">ao vivo · horário de Brasília</div>
+                <h2><button type="button" class="title-btn" id="chart-title" title="Trocar o par do gráfico">Gráfico</button></h2>
+                <div class="muted small chart-sub" id="chart-sub">horário de Brasília</div>
               </div>
-              <div class="field focus-field" id="focus-field" hidden>
-                <label for="focus-asset">Ver o par</label>
-                <select id="focus-asset"></select>
-              </div>
-              <div class="price-box">
-                <div class="price" id="p-price">—</div>
-                <div class="muted small" id="p-price-sub">sem dados</div>
+              <div class="chart-head-right">
+                <span class="real-badge chart-real-badge" id="chart-real-badge" hidden>CONTA REAL</span>
+                <div class="price-box">
+                  <div class="price" id="p-price">—</div>
+                  <div class="muted small" id="p-price-sub">sem dados</div>
+                </div>
+                <button type="button" class="ghost-btn small-btn chart-expand" id="chart-expand" aria-pressed="false" title="Só o gráfico, em tela cheia">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+                  <span id="chart-expand-text">Expandir</span>
+                </button>
               </div>
             </div>
+            <!-- Par do gráfico: olhar um par não muda o que o bot opera -->
+            <div class="pair-tabs" id="pair-tabs" role="group" aria-label="Par no gráfico"></div>
             <div class="chart-tools">
               <div class="toggles" id="script-toggles" role="group" aria-label="Estratégias no gráfico"></div>
               <label class="check"><input type="checkbox" id="show-backtest"> mostrar sinais do backtest</label>
               <label class="check"><input type="checkbox" id="show-reading"> mostrar a leitura do estudo</label>
             </div>
+            <div class="bt-count" id="bt-count" hidden></div>
             <div class="reading-legend" id="reading-legend" hidden></div>
-            <div class="readout" id="readout">Passe o mouse sobre uma vela para ver os detalhes.</div>
             <div class="chart-box" id="chart-box">
+              <div class="readout idle" id="readout">Passe o mouse sobre uma vela para ver os detalhes.</div>
               <div id="chart" class="chart" aria-label="Gráfico de velas com linhas e sinais"></div>
             </div>
             <div class="line-legend" id="line-legend"></div>
           </div>
 
           <div class="side-col">
+            <!-- Entrada manual: a decisão é sua; os stops e os filtros do bot não valem aqui -->
+            <div class="card manual-card" id="manual-card">
+              <div class="card-head">
+                <h2>Entrada manual</h2>
+                <span class="m-acct" id="m-acct">CONTA DEMO</span>
+              </div>
+              <div class="m-pair">
+                <strong id="m-asset">—</strong>
+                <span class="m-payout">Payout <strong id="m-payout">—</strong></span>
+              </div>
+              <div class="m-row">
+                <label class="m-label" for="m-amount">Valor</label>
+                <div class="stepper">
+                  <button type="button" id="m-minus" aria-label="Diminuir o valor">−</button>
+                  <input id="m-amount" inputmode="decimal" autocomplete="off" spellcheck="false">
+                  <button type="button" id="m-plus" aria-label="Aumentar o valor">+</button>
+                </div>
+              </div>
+              <div class="m-row m-row-col">
+                <span class="m-label" id="m-exp-label">Expiração</span>
+                <div class="m-exp" id="m-exp" role="group" aria-labelledby="m-exp-label"></div>
+              </div>
+              <div class="m-info small">
+                <span id="m-expiry">—</span>
+                <span id="m-win"></span>
+              </div>
+              <div class="m-buttons">
+                <button type="button" class="m-call" id="m-call" data-dir="call">▲ CALL</button>
+                <button type="button" class="m-put" id="m-put" data-dir="put">▼ PUT</button>
+              </div>
+              <div class="m-msg small" id="m-msg" role="status" aria-live="polite"></div>
+              <div class="m-today muted small" id="m-today"></div>
+            </div>
             <div class="card armed-card">
               <div class="card-head">
                 <h2>Próxima entrada <span class="tag">dentro da vela</span></h2>
@@ -341,8 +371,8 @@
             </fieldset>
             <fieldset class="cfg-checks">
               <legend>Pares que o bot acompanha <span class="muted small">(até 8)</span></legend>
-              <p class="muted small">Na IQ, a binária dos pares normais é o instrumento com final <strong>-op</strong> (EURUSD-op). Os com final -OTC são o mercado de fim de semana, com estatística separada. Par fechado para binária continua sendo avaliado, mas não pede aprovação.</p>
-              <div class="pair-chips" id="cfg-assets"></div>
+              <p class="muted small">Na IQ, a binária dos pares normais é o instrumento com final <strong>-op</strong> (EURUSD-op). Os com final -OTC costumam abrir quando o mercado normal fecha, com estatística separada. Par fechado para binária continua sendo avaliado, mas não pede aprovação.</p>
+              <div class="pair-groups" id="cfg-assets"></div>
               <div class="cfg-actions">
                 <input id="cfg-asset-new" placeholder="outro par, ex.: USDCHF-op" spellcheck="false" maxlength="20">
                 <button type="button" class="ghost-btn" id="cfg-asset-add">Adicionar</button>
@@ -402,6 +432,23 @@
   </div>
 
   <div id="tooltip" class="tooltip" hidden></div>
+  <!-- Todos os pares de binária da IQ, para olhar no gráfico (e operar na mão) -->
+  <div class="picker-back" id="pair-picker" hidden>
+    <div class="picker" role="dialog" aria-modal="true" aria-labelledby="pp-title">
+      <div class="picker-head">
+        <h2 id="pp-title">Escolher o par do gráfico</h2>
+        <button type="button" class="ghost-btn small-btn" id="pp-close">Fechar</button>
+      </div>
+      <p class="muted small">Olhar um par não muda o que o bot opera: isso fica na Configuração.</p>
+      <input type="search" id="pp-search" placeholder="Buscar: EUR, BTC, Apple…" autocomplete="off" spellcheck="false" aria-label="Buscar par">
+      <div class="picker-filters">
+        <div class="segmented" id="pp-cats" role="group" aria-label="Categoria"></div>
+        <label class="check"><input type="checkbox" id="pp-open" checked> só abertos agora</label>
+      </div>
+      <div class="muted small" id="pp-note"></div>
+      <ul class="picker-list" id="pp-list"></ul>
+    </div>
+  </div>
   <div class="overlay" id="overlay" hidden>
     <div class="overlay-card">
       <img src="icon-192.png" alt="" width="72" height="72">

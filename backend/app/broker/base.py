@@ -83,6 +83,15 @@ class Broker(ABC):
     def payouts(self, option_type: str = "turbo") -> dict[str, float]:
         """Payout por ativo em fração (0.85 = 85%)."""
 
+    def release_stream(self, asset: str, timeframe: int) -> None:
+        """Cancela o stream sem esperar a corretora confirmar (ao parar o bot). Padrão: `stop_stream`."""
+        self.stop_stream(asset, timeframe)
+
+    def pairs(self) -> list[dict]:
+        """Binárias de até 5 min, para escolher na tela: asset, label, category, payout, open, reason, min, max e
+        expiries (minutos). Nunca espera pela corretora."""
+        return []
+
     def disconnect(self) -> None:
         """Fecha a conexão (ao trocar de login). Padrão: nada a fazer."""
 

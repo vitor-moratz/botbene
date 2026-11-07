@@ -8,6 +8,7 @@ from app.ldp.engine import EngineStep, LdpEngine
 from app.ldp.levels import Role
 from app.ldp.reading import read_candles
 from app.market.candle import Candle
+from app.strategies import MANUAL
 from app.strategies.ldp_v13 import LdpV13
 from app.strategies.wiki_pro_v21 import WikiProV21
 
@@ -130,6 +131,8 @@ def order_entries(orders: Sequence[dict], signals: Sequence[dict], timeframe: in
         signal = by_id.get(o.get("signal_id"))
         if signal is not None:
             ts = signal["entry_ts"]
+        elif o["strategy"] == MANUAL:  # pode vencer minutos depois: a marca fica na vela em que você entrou
+            ts = o["requested_at"] - o["requested_at"] % timeframe
         else:  # sem o sinal à mão: a ordem vence no fim da vela em que entrou
             end = o.get("expires_at")
             ts = end - timeframe if end else o["requested_at"] - o["requested_at"] % timeframe
