@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.broker.base import AccountType, Broker, BrokerError, OrderResult, OrderTicket
+from app.broker.base import BINARY, AccountType, Broker, BrokerError, OrderRefused, OrderResult, OrderTicket
 from app.market.candle import Candle
 
 
@@ -22,22 +22,47 @@ class FakeBroker(Broker):
         self.tickets: list[OrderTicket] = []
         self.results: dict[int, OrderResult] = {}  # resultado por ordem (padrão: win com 80%)
         self.refuse_orders: str | None = None
+        self.refuse_kinds: dict[str, str] = {}  # tipo de opção -> recusa da IQ (nada comprado)
         self.pair_list: list[dict] = []
         self.buy_minutes: list[int] = []
+        # Tipo de opção -> (aberto, motivo, payout). Sem a chave: binária aberta e sem digital (como antes).
+        self.offers: dict[str, tuple[bool, str, float | None]] = {}
+        # Sentimento dos traders: par -> (valor, idade em s). `mood_calls`: (par, force) de cada pedido.
+        self.moods: dict[str, tuple[float, float]] = {}
+        self.mood_calls: list[tuple[str, bool]] = []
 
     def connect(self) -> None: ...
+
+    def subscribe_mood(self, asset, force=False):
+        self.mood_calls.append((asset, force))
+        return asset in self.moods
+
+    def traders_mood(self, asset):
+        return self.moods.get(asset)
 
     def pairs(self):
         return self.pair_list
 
-    def buy(self, asset, direction, amount, minutes=1):
+    def buy(self, asset, direction, amount, minutes=1, kind=BINARY):
         if self.refuse_orders:
             raise BrokerError(self.refuse_orders)
+        if kind in self.refuse_kinds:
+            raise OrderRefused(self.refuse_kinds[kind])
         self.buy_minutes.append(minutes)
         now = self.server_time()
-        t = OrderTicket(len(self.tickets) + 1, asset, direction, amount, self.account.value, now, int(now))
+        t = OrderTicket(len(self.tickets) + 1, asset, direction, amount, self.account.value, now, int(now), kind=kind)
         self.tickets.append(t)
         return t
+
+    def tradable(self, asset, kind=BINARY):
+        offer = self.offers.get(kind)
+        if offer is None:
+            return super().tradable(asset, kind)
+        return (True, "ok") if offer[0] else (False, offer[1])
+
+    def payout_now(self, asset, kind=BINARY):
+        offer = self.offers.get(kind)
+        return offer[2] if offer else None
 
     def order_result(self, ticket):
         return self.results.get(ticket.order_id, OrderResult("win", round(ticket.amount * self._payout, 2)))

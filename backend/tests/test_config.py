@@ -88,8 +88,8 @@ def test_estados_e_scripts_pela_tela(tmp_path):
     with make_client(tmp_path) as client:
         body = client.get("/api/config").json()
         assert body["strategies"] == {"retracao_comando": "operate"}
-        assert body["strategy_names"] == ["score_ldp", "retracao_comando", "ldp_apostila", "retracao_lote", "reversao_forca",
-                                          "reversao_indecisao"]
+        assert body["strategy_names"] == ["score_ldp", "retracao_comando_v2", "retracao_comando", "ldp_apostila", "retracao_lote",
+                                          "reversao_forca", "reversao_indecisao", "esticao", "deeplob_iq", "bb_rci", "bb_rci_v2"]
         assert body["chart_scripts"] == {"ldp_lines": True, "ldp_arrows": True, "wiki_pro": False}
         r = client.put("/api/config", json={"strategies": {"retracao_comando": "observe", "ldp_apostila": "off"},
                                             "chart_scripts": {"ldp_arrows": False}})
@@ -98,6 +98,10 @@ def test_estados_e_scripts_pela_tela(tmp_path):
         assert r.json()["chart_scripts"] == {"ldp_lines": True, "ldp_arrows": False, "wiki_pro": False}
         assert client.put("/api/config", json={"strategies": {"ldp_v13": "operate"}}).status_code == 422  # script não é estratégia
         assert client.put("/api/config", json={"strategies": {"retracao_comando": "talvez"}}).status_code == 422
+        # o esticão e o DeepLOB ainda estão em validação: observam, mas não podem operar
+        assert client.put("/api/config", json={"strategies": {"esticao": "operate"}}).status_code == 422
+        assert client.put("/api/config", json={"strategies": {"deeplob_iq": "operate"}}).status_code == 422
+        assert client.put("/api/config", json={"strategies": {"esticao": "observe"}}).json()["strategies"] == {"esticao": "observe"}
         assert client.put("/api/config", json={"chart_scripts": {"outro": True}}).status_code == 422
 
 
@@ -123,3 +127,13 @@ def test_testar_conexao_e_rotas_novas(tmp_path):
         assert client.get("/api/chart?asset=GBPUSD&limit=100").json()["asset"] == "GBPUSD"
         client.post("/api/bot/stop")
         wait_status(client, "parado")
+
+
+def test_instalacao_nova_vem_com_os_pares_op_do_estudo_e_troca_automatica():
+    from app.research.dataset import RESEARCH_ASSETS
+    from app.service.config_store import DEFAULT_PAIRS, UserConfig
+
+    cfg = UserConfig()
+    assert cfg.assets == list(DEFAULT_PAIRS) and all(a.endswith("-op") for a in cfg.assets)
+    assert cfg.auto_market is True
+    assert set(DEFAULT_PAIRS) == set(RESEARCH_ASSETS)  # os mesmos pares da pesquisa (velas guardadas para o estudo)

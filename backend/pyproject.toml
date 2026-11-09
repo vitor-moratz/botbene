@@ -14,10 +14,13 @@ dependencies = [
     "uvicorn>=0.30",
     "websockets>=12",
     "sqlalchemy>=2.0.40",
+    "numpy>=2.0",  # só para a rede DeepLOB (estratégia de pesquisa, em Observar)
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "httpx>=0.27", "esprima>=4.0"]
+# Só para treinar o meta-labeling (ambiente backend/.venv-pesquisa, nunca no do bot): docs/metalabel_preregistro.md
+research = ["scikit-learn>=1.4"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]

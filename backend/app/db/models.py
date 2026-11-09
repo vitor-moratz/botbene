@@ -21,6 +21,17 @@ class CandleRow(Base):
     volume: Mapped[float] = mapped_column(Float, default=0.0)
 
 
+class MoodRow(Base):
+    """Sentimento dos traders da IQ a cada 5 s (base de pesquisa), no mesmo relógio das velas de 5 s."""
+
+    __tablename__ = "mood"
+
+    asset: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ts: Mapped[int] = mapped_column(Integer, primary_key=True)
+    value: Mapped[float] = mapped_column(Float)  # como a IQ manda (fração de 0 a 1)
+    age: Mapped[float] = mapped_column(Float)  # segundos desde que a IQ mandou esse valor
+
+
 class SessionRow(Base):
     __tablename__ = "sessions"
 
@@ -109,12 +120,13 @@ class OrderRow(Base):
     ref_price: Mapped[float | None] = mapped_column(Float, nullable=True)  # preço no momento da decisão
     profit: Mapped[float | None] = mapped_column(Float, nullable=True)  # em dinheiro
     error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    option_type: Mapped[str] = mapped_column(String(8), default="binary")  # binary | digital
 
     def to_dict(self) -> dict:
         return {
             "id": self.id, "signal_id": self.signal_id, "asset": self.asset, "timeframe": self.timeframe,
             "strategy": self.strategy, "direction": self.direction, "amount": self.amount, "gale": self.gale or 0,
-            "account": self.account,
+            "account": self.account, "option_type": self.option_type or "binary",
             "status": self.status, "broker_order_id": self.broker_order_id, "requested_at": self.requested_at,
             "expires_at": self.expires_at, "ref_price": self.ref_price, "profit": self.profit, "error": self.error,
         }

@@ -20,6 +20,18 @@ def is_otc(asset: str) -> bool:
     return asset.upper().endswith("-OTC")
 
 
+def twin_asset(asset: str) -> str | None:
+    """O mesmo par no outro mercado: "EURUSD-OTC" <-> "EURUSD-op". None se não tiver os dois."""
+    base, sep, suffix = asset.partition("-")
+    if not sep or not base:
+        return None
+    if suffix.upper() == "OTC":
+        return f"{base}-op"
+    if suffix == "op":
+        return f"{base}-OTC"
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class Candle:
     """Uma vela OHLC. `ts` é o início da vela em segundos (epoch UTC)."""

@@ -32,6 +32,7 @@ def test_painel_e_api_de_ponta_a_ponta(tmp_path):
         assert client.get("/api/status").json()["status"] == "parado"
 
         client.app.state.bot._strategies_factory = default_strategies  # confere também o caminho de sinal no fechamento
+        client.app.state.config.update({"assets": ["EURUSD-op"]})  # um par só (o padrão de instalação nova tem 12)
         # o campo antigo `asset` (painel velho) é ignorado: valem os pares da Configuração
         r = client.post("/api/bot/start", json={"asset": "eurusd", "timeframe": 60})
         assert r.status_code == 200

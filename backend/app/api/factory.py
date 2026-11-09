@@ -22,6 +22,7 @@ from app.service.archiver import ResearchArchiver
 from app.service.config_store import ConfigStore
 from app.service.events import EventHub
 from app.service.guard import ProcessGuard
+from app.service.mood import MoodRecorder
 from app.service.resolver import PendingResolver
 
 FRONTEND_DIR = BACKEND_DIR.parent / "frontend"
@@ -50,7 +51,9 @@ def create_app(
     config = ConfigStore(settings.resolved_data_dir() / "config.json", settings.iq_email, settings.iq_password)
     bot = BotService(settings, db, hub, broker_factory or iq_broker_factory(settings, config), config=config)
     resolver = PendingResolver(db, bot.shared_broker, hub)
-    archiver = ResearchArchiver(research_db(settings), bot.shared_broker, config)
+    rdb = research_db(settings)
+    archiver = ResearchArchiver(rdb, bot.shared_broker, config)
+    mood = MoodRecorder(rdb, bot.current_broker, config)  # só a conexão do bot: nunca faz login sozinho
     guard = ProcessGuard(bot, settings.resolved_data_dir())
     supervised = os.environ.get("BOTBENE_SUPERVISED") == "1"
 
@@ -60,9 +63,13 @@ def create_app(
         orphans = db.close_orphan_orders()
         if orphans:
             log.warning("%d ordem(ns) ficaram sem resultado porque o servidor parou", orphans)
+        synced = db.sync_order_results()
+        if synced:
+            log.info("%d sinal(is) passaram a usar o resultado da ordem na corretora", synced)
         if start_resolver:
             resolver.start()
             archiver.start()
+            mood.start()
         if supervised:
             info = guard.take_resume()
             if info:
@@ -73,6 +80,7 @@ def create_app(
         guard.stop()
         resolver.stop()
         archiver.stop()
+        mood.stop()
         bot.stop(wait=5)
         if hard_exit:
             # Threads presas da biblioteca podem segurar o fim do Python para sempre (servidor fantasma).

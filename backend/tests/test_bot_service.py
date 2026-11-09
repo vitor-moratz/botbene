@@ -296,6 +296,16 @@ def test_gestao_de_risco_bloqueia(tmp_path):
     assert not broker.tickets and db.list_orders()[0]["status"] == "bloqueada"
 
 
+def test_ordem_bloqueada_fica_registrada_na_conta_do_bot(tmp_path):
+    """Antes, a ordem que não chegava à corretora ficava com a conta padrão (PRACTICE), mesmo com o bot na real."""
+    bot, broker, db, ap, _ = approval_bot(tmp_path, mode="automatico",
+                                          risk=RiskConfig(stake=5, stop_win=None, stop_loss=None, max_trades=0))
+    bot.account = "REAL"
+    bot._poll(broker)
+    [o] = db.list_orders()
+    assert o["status"] == "bloqueada" and "limite" in o["error"] and o["account"] == "REAL" and not broker.tickets
+
+
 def test_corretora_recusa_vira_erro(tmp_path):
     bot, broker, db, ap, _ = approval_bot(tmp_path)
     broker.refuse_orders = "saldo insuficiente"

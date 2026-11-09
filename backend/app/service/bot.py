@@ -18,6 +18,15 @@ Vigia da conexão: a biblioteca da IQ às vezes trava ou perde o websocket sem a
 sozinho quando a IQ para de responder algumas vezes seguidas, quando o horário da IQ para de andar,
 quando a biblioteca diz que caiu, ou quando nenhum par aberto recebe preço novo por um tempo. Na
 reconexão, fecha a conexão velha, abre outra, recarrega o histórico (cobre o buraco) e volta a rodar.
+
+Troca de mercado (Configuração → "trocar sozinho entre OTC e mercado normal"): o bot opera o par normal
+("EURUSD-op") sempre que ele está aberto e volta para o OTC ("EURUSD-OTC") quando ele fecha. Ao iniciar, já
+começa no mercado aberto; rodando, troca um par por vez, no meio da vela e sem entrada armada nem pedido
+aberto nele, para não perder um gatilho (service/market.py decide para onde ir).
+
+Tipo de opção (Configuração → binária, digital ou a de maior payout): a binária e a digital usam o mesmo preço,
+então o gráfico e as estratégias não mudam. A cada vela fechada de cada par, o bot vê o que está aberto e o
+payout de cada tipo e decide em qual vai a ordem da vela seguinte (service/product.py).
 """
 
 from __future__ import annotations
@@ -33,7 +42,7 @@ from datetime import datetime
 
 from app.analytics.stats import breakeven
 from app.analytics.timeline import BRT, period_start
-from app.broker.base import Broker, BrokerError
+from app.broker.base import BINARY, DIGITAL, Broker, BrokerError
 from app.config import Settings
 from app.db.database import Database
 from app.ldp.engine import EngineStep, LdpEngine
@@ -43,11 +52,13 @@ from app.paper import CANCELED, judge, profit_units
 from app.service.chart import build_chart, build_reading, candle_dict, ldp_overlay, reading
 from app.service.config_store import ORDER_MODES, ConfigStore, UserConfig
 from app.service.events import EventHub
+from app.service.market import TO_NORMAL, market_target
 from app.service.orders import OrderManager
+from app.service.product import BEST, Offer, choose, market_view
 from app.service.watch import PairWatcher
 from app.strategies import STRATEGY_ORDER
 from app.strategies.base import Signal, Strategy
-from app.strategies.intra import default_intra, plan_all, replay, wants_windows, watch_forming
+from app.strategies.intra import bind_asset, default_intra, plan_all, replay, wants_windows, watch_forming
 from app.strategies.ldp_apostila import ArmedSetup, Plan, gap_ok, touched
 from app.strategies.ldp_apostila import backtest as intra_backtest
 
@@ -63,7 +74,10 @@ SCORE_WARMUP_SECONDS = 2 * 3600  # velas de 5 s antes da meia-noite: a recorrên
 EXCERPT_CANDLES = 60  # velas no gráfico de cada pedido de aprovação
 READING_CONTEXT = 300  # velas antes do trecho mostrado, para a leitura já chegar nele com lotes e regiões
 APPROVALS_KEPT = 12
-OPEN_APPROVAL = ("aguardando", "aprovado", "disparou")
+# Entrada do gale com o gatilho já disparado, esperando o resultado da ordem anterior do gale (ele chega ~1 s depois
+# da vela abrir). Sai assim que o resultado chega, com o valor certo; se a janela fechar antes, fica bloqueada.
+WAIT_GALE = "esperando resultado"
+OPEN_APPROVAL = ("aguardando", "aprovado", "disparou", WAIT_GALE)
 LIVE_STATUSES = ("conectando", "rodando", "reconectando")
 STOP_STREAMS_SECONDS = 5  # numa conexão travada, parar não insiste além disso em cancelar os streams
 
@@ -74,6 +88,13 @@ STALL_SECONDS = 150  # par aberto sem nenhum preço novo por isso = stream morto
 CONNECTION_CHECK_SECONDS = 30
 RECONNECT_WAITS = (5, 10, 20, 30, 60, 120, 300)  # espera entre tentativas; depois fica na última
 CONNECT_BACKOFF_SECONDS = 30  # depois de um login que falhou, o painel e o arquivo de velas não tentam outro antes disso
+
+# Troca entre OTC e mercado normal
+MARKET_CHECK_SECONDS = 5
+# Só troca entre estes segundos da vela: longe do fechamento e dos 15 s do gatilho, porque carregar o par
+# novo segura o bot por alguns segundos (os outros pares só voltam a ser lidos depois).
+SWITCH_FROM_SECOND, SWITCH_TAIL_SECONDS = 18, 25
+SWITCH_RETRY_SECONDS = 300  # o par novo não carregou: tenta de novo depois disso
 # Erros que não melhoram tentando de novo (senha errada, sem login, REAL travada): viram "erro" na hora.
 PERMANENT_ERRORS = ("invalid_credentials", "Preencha IQ_EMAIL", "2FA", "Conta REAL bloqueada", "iqoptionapi não instalada")
 
@@ -107,13 +128,19 @@ class AssetRunner:
         self.payout: float | None = None
         self.session_id: int | None = None
         self.error: str | None = None
-        self.tradable: tuple[bool, str] = (True, "ok")  # binária de 1 min aberta neste par? (conferido a cada vela)
+        self.tradable: tuple[bool, str] = (True, "ok")  # o tipo escolhido está aberto neste par? (conferido a cada vela)
+        self.kind = BINARY  # tipo de opção da próxima ordem neste par (binária ou digital)
+        self.payouts: dict[str, float | None] = {}  # payout de cada tipo, da última conferência
+        self.product_epoch = -1  # a conferência valeu para qual escolha da Configuração
         self.gap_checked: set[tuple] = set()
         self.last_forming: Candle | None = None
         # Vigia: último dado diferente que o stream entregou e quando (relógio monotônico).
         self.last_sig: tuple | None = None
         self.last_data = time.monotonic()
         self.stream_restarted = False
+        # Troca de mercado pendente: para onde vai e o que ela espera (entrada armada, pedido aberto…).
+        self.switch_to: str | None = None
+        self.switch_wait: str | None = None
 
     @property
     def ready(self) -> bool:
@@ -133,7 +160,9 @@ class AssetRunner:
         forming = self.store.forming if self.store else None
         price = forming.close if forming else (last.close if last else None)
         return {"asset": self.asset, "payout": self.payout, "price": price, "armed": len(self.armed), "error": self.error,
-                "tradable": self.tradable[0], "tradable_note": None if self.tradable[0] else self.tradable[1]}
+                "tradable": self.tradable[0], "tradable_note": None if self.tradable[0] else self.tradable[1],
+                "kind": self.kind, "payouts": dict(self.payouts),
+                "switch_to": self.switch_to, "switch_wait": self.switch_wait}
 
 
 class BotService:
@@ -190,10 +219,17 @@ class BotService:
         self._next_conn_check = 0.0
         self.connection = self._fresh_connection()
         self.hung_attempts = 0  # tentativas seguidas de reconectar em que a IQ nem respondeu (lido pelo guarda do processo)
+        # Troca entre OTC e mercado normal (os limites ficam no objeto para os testes poderem mudar).
+        self.market_swaps: deque[dict] = deque(maxlen=20)
+        self.market_check_seconds = MARKET_CHECK_SECONDS
+        self.switch_window = (SWITCH_FROM_SECOND, SWITCH_TAIL_SECONDS)
+        self._next_market_check = 0.0
+        self._switch_retry: dict[str, tuple[float, str]] = {}  # par que não carregou: (tenta de novo às, motivo)
         cfg = self.config.get()
         self.mode, self.order_strategies = cfg.mode, set(cfg.operating)
         self.filters = cfg
         self.running_strategies = set(cfg.running)  # ligar ou desligar uma estratégia vale no próximo início
+        self._product_epoch = 0  # muda quando o tipo de opção da Configuração muda: cada par confere de novo
 
     # ------------------------------------------------------------------ controle
 
@@ -258,6 +294,7 @@ class BotService:
             self.started_at = int(time.time())
             self.connection = self._fresh_connection()
             self.hung_attempts = 0
+            self._switch_retry, self._next_market_check = {}, 0.0
             self._set_status("conectando")
             self._thread = threading.Thread(target=self._run, name="botbene", daemon=True)
             self._thread.start()
@@ -350,20 +387,31 @@ class BotService:
             raise BrokerError("Sem conexão com a IQ Option agora: o bot está reconectando.")
         return broker
 
-    def manual_order(self, asset: str, direction: str, amount: float, minutes: int) -> dict:
+    def manual_order(self, asset: str, direction: str, amount: float, minutes: int, kind: str = BINARY) -> dict:
         """Entrada feita na mão. Fora dos stops e dos filtros do bot; só vale o que a IQ exige."""
         if self.status == "reconectando":
             raise BotBusyError("O bot está reconectando à IQ. Espere alguns segundos.")
         broker = self._panel_broker()
         info = next((p for p in broker.pairs() if p["asset"] == asset), None)
         if info is None:
-            raise ValueError(f"{asset} não está na lista de binárias da IQ.")
-        if not info["open"]:
-            raise ValueError(info["reason"] or f"{asset} está fechado para binária agora.")
-        if minutes not in info["expiries"]:
-            raise ValueError(f"{asset} não tem expiração de {minutes} min.")
+            raise ValueError(f"{asset} não está na lista de pares da IQ.")
+        if kind == DIGITAL:
+            if not info.get("digital"):
+                raise ValueError(f"{asset} não tem opção digital.")
+            if not info.get("digital_open"):
+                raise ValueError(info.get("digital_reason") or f"{asset} está fechado para digital agora.")
+            if minutes not in (info.get("digital_expiries") or []):
+                raise ValueError(f"A digital de {asset} não tem expiração de {minutes} min.")
+        else:
+            if info.get("binary") is False:
+                raise ValueError(f"{asset} não tem binária: só digital.")
+            if not info["open"]:
+                raise ValueError(info["reason"] or f"{asset} está fechado para binária agora.")
+            if minutes not in info["expiries"]:
+                raise ValueError(f"{asset} não tem expiração de {minutes} min.")
         amount = round(amount, 2)
-        low, high = info.get("min"), info.get("max")
+        # Os limites da lista são os da binária. Os da digital a IQ não informa: ela mesma recusa o que não aceitar.
+        low, high = (info.get("min"), info.get("max")) if kind == BINARY else (None, None)
         if (low is not None and amount < low) or (high is not None and amount > high):
             raise ValueError(f"O valor em {asset} precisa ficar entre {low} e {high}.")
         with self._lock:
@@ -374,10 +422,12 @@ class BotService:
             timeframe = r.timeframe if r else self.timeframe
         account = getattr(broker, "account", None)
         return self.orders.submit_manual(asset=asset, timeframe=timeframe, direction=direction, amount=amount, minutes=minutes,
-                                         ref_price=price, requested_at=int(self._now()), account=getattr(account, "value", account))
+                                         ref_price=price, requested_at=int(self._now()), account=getattr(account, "value", account),
+                                         kind=kind)
 
     def apply_config(self, cfg: UserConfig) -> None:
-        """Modo, quem opera e gestão de risco valem na hora; ligar ou desligar estratégia, ativos e vela, no próximo início."""
+        """Modo, quem opera, gestão de risco e troca de mercado valem na hora; ligar ou desligar estratégia, ativos e
+        vela, no próximo início."""
         with self._lock:
             self._apply(cfg)
             self.orders.set_config(cfg.risk())
@@ -388,8 +438,10 @@ class BotService:
         self.hub.publish({"type": "status", **self.snapshot()})
 
     def _apply(self, cfg: UserConfig) -> None:
+        if cfg.option_type != self.filters.option_type:
+            self._product_epoch += 1  # cada par confere o tipo de opção de novo na próxima leitura
         self.mode, self.order_strategies = cfg.mode, set(cfg.operating)
-        self.filters = cfg  # payout mínimo e horário de operação (UserConfig.entry_block)
+        self.filters = cfg  # payout mínimo, horário de operação (UserConfig.entry_block) e tipo de opção
 
     def shared_broker(self, force: bool = False) -> Broker:
         """Conexão com a corretora compartilhada entre o bot, o resolvedor e as ordens.
@@ -437,14 +489,16 @@ class BotService:
         """Conta escolhida, a conta em que a conexão está e o saldo dela."""
         chosen = self.config.get().account
         if self.status == "reconectando":  # o vigia cuida da conexão: o painel não abre outra em paralelo
-            return {"chosen": chosen, "account": None, "balance": None, "currency": None, "error": "reconectando à IQ Option"}
+            return {"chosen": chosen, "account": None, "balance": None, "bonus": None, "currency": None,
+                    "error": "reconectando à IQ Option"}
         try:
             broker = self.shared_broker()
             account = getattr(broker, "account", None)
-            return {"chosen": chosen, "account": getattr(account, "value", account), "balance": broker.balance(),
+            balance, bonus = broker.balance_info()  # o site da IQ mostra os dois somados
+            return {"chosen": chosen, "account": getattr(account, "value", account), "balance": balance, "bonus": bonus,
                     "currency": broker.currency(), "error": None}
         except Exception as exc:  # noqa: BLE001 - sem conexão: o painel mostra o motivo
-            return {"chosen": chosen, "account": None, "balance": None, "currency": None, "error": str(exc)}
+            return {"chosen": chosen, "account": None, "balance": None, "bonus": None, "currency": None, "error": str(exc)}
 
     def switch_account(self, account: str, confirm: str | None = None) -> dict:
         """Troca entre demo e real. Só com o bot parado; a real pede a palavra REAL digitada."""
@@ -510,6 +564,9 @@ class BotService:
                 "risk": self.orders.snapshot(payout or self.settings.default_payout),
                 "connection": dict(self.connection),
                 "watch": self.watcher.view(),
+                "auto_market": bool(self.filters.auto_market),
+                "market_swaps": list(self.market_swaps),
+                "option_type": self.filters.option_type,
             }
 
     def chart(self, limit: int = 300, asset: str | None = None) -> dict:
@@ -577,6 +634,7 @@ class BotService:
                 if problem:
                     broker = self._recover(broker, problem)  # None = parado no meio da reconexão
                     continue
+                self._switch_markets(broker)
                 self._stop.wait(self.poll_seconds)
         except Exception as exc:  # noqa: BLE001 - qualquer falha vira status de erro no painel
             log.exception("Bot parou com erro")
@@ -750,6 +808,7 @@ class BotService:
 
     def _bootstrap(self, broker: Broker, full_day: bool = True) -> None:
         """`full_day`: também busca as velas de 5 s que faltam para o retroativo cobrir o dia inteiro."""
+        self._pick_markets(broker)
         payouts = self._fetch_payouts(broker)
         self.currency = broker.currency()
         runners = list(self.runners.values())
@@ -788,6 +847,7 @@ class BotService:
         store.load_history(history)
         engine = LdpEngine()
         intra = self._intra_for(tf)
+        bind_asset(intra, r.asset)  # o DeepLOB fica em silêncio nos pares OTC
         subs: list[Candle] | None = None
         if wants_windows(intra):  # o score precisa ver os primeiros 15 s de cada vela (recorrência): 5 s antes de processar
             subs = self._fetch_subcandles(broker, r.asset, tf, len(history), day_start - SCORE_WARMUP_SECONDS if full_day else None)
@@ -801,7 +861,7 @@ class BotService:
             account = getattr(broker, "account", None)
             self.account = getattr(account, "value", account)
         self.db.save_candles(r.asset, tf, history)
-        r.tradable = broker.tradable(r.asset)
+        self._refresh_product(broker, r)
         r.session_id = self.db.start_session(r.asset, tf, self.account or "PRACTICE", r.payout)
         self._resolve_from_history(r, store.closed)
         if self._stop.is_set():  # as velas de 5 s são a parte mais demorada da carga
@@ -816,6 +876,154 @@ class BotService:
             opened = self._open_approvals(r, r.armed, self._now())
         if opened:
             self.hub.publish({"type": "approval", "status": self.snapshot()})
+
+    # ------------------------------------------------------------------ troca entre OTC e mercado normal
+
+    def _market_pairs(self, broker: Broker) -> dict[str, dict]:
+        """A lista da corretora pelo tipo de opção da Configuração (aberto e payout do tipo que o bot compra)."""
+        option_type = self.filters.option_type
+        return {p["asset"]: market_view(p, option_type) for p in broker.pairs()}
+
+    def _refresh_product(self, broker: Broker, r: AssetRunner) -> None:
+        """Em qual tipo de opção vai a próxima ordem do par, se ele está aberto para ela e com qual payout."""
+        offers = {}
+        for kind in (BINARY, DIGITAL):
+            ok, why = broker.tradable(r.asset, kind)
+            offers[kind] = Offer(ok, why, broker.payout_now(r.asset, kind))
+        pick = choose(self.filters.option_type, offers)
+        with self._lock:
+            if pick.kind != r.kind and r.product_epoch >= 0:
+                log.info("%s: próximas ordens em %s (payout %s)", r.asset, pick.kind,
+                         f"{pick.payout * 100:.0f}%" if pick.payout else "?")
+            r.kind, r.tradable = pick.kind, (pick.ok, pick.why)
+            r.payouts = {k: o.payout for k, o in offers.items()}
+            if pick.payout:  # o payout muda ao longo do dia (filtro de payout mínimo)
+                r.payout = pick.payout
+            r.product_epoch = self._product_epoch
+
+    def _pick_markets(self, broker: Broker) -> None:
+        """Antes de carregar (ao iniciar e ao reconectar): cada par já começa no mercado que está aberto."""
+        if not self.filters.auto_market:
+            return
+        try:
+            pairs = self._market_pairs(broker)
+            now = broker.server_time()
+        except Exception as exc:  # noqa: BLE001 - sem a lista, fica com os pares como estão
+            log.warning("Troca de mercado: lista de pares indisponível ao iniciar: %s", exc)
+            return
+        picked: dict[str, AssetRunner] = {}
+        swaps = []
+        for name, r in self.runners.items():
+            target = market_target(name, pairs, now, self.filters.min_payout)
+            if target is None or target[0] in self.runners or target[0] in picked:
+                picked.setdefault(name, r)
+                continue
+            to = target[0]
+            picked[to] = AssetRunner(to, r.timeframe, self._strategies_factory())
+            why = "mercado normal aberto" if target[1] == TO_NORMAL else "mercado normal fechado"
+            swaps.append({"at": now, "from": name, "to": to, "reason": why})
+            log.info("Troca de mercado: %s começa como %s (%s)", name, to, why)
+        if not swaps:
+            return
+        with self._lock:
+            self.runners = picked
+            for sw in swaps:
+                self.market_swaps.appendleft(sw)
+                if self.focus == sw["from"]:
+                    self.focus = sw["to"]
+
+    def _switch_markets(self, broker: Broker) -> None:
+        """Com o bot rodando: troca os pares cujo outro mercado abriu (ou fechou). Nunca derruba o bot."""
+        if not self.filters.auto_market or self._stop.is_set():
+            return
+        mono = time.monotonic()
+        if mono < self._next_market_check:
+            return
+        self._next_market_check = mono + self.market_check_seconds
+        try:
+            pairs = self._market_pairs(broker)
+            changed = False
+            for r in list(self.runners.values()):
+                if self._stop.is_set():
+                    return
+                now = self._now()  # de novo a cada par: carregar o anterior leva alguns segundos
+                target = market_target(r.asset, pairs, now, self.filters.min_payout)
+                to = target[0] if target and target[0] not in self.runners else None
+                wait = self._switch_wait(r, now) if to else None
+                retry_at, retry_why = self._switch_retry.get(to, (0.0, "")) if to else (0.0, "")
+                if to and not wait and retry_at > time.monotonic():
+                    wait = retry_why
+                with self._lock:
+                    changed |= (r.switch_to, r.switch_wait) != (to, wait)
+                    r.switch_to, r.switch_wait = to, wait
+                if to and not wait:
+                    why = "mercado normal abriu" if target[1] == TO_NORMAL else "mercado normal fechou"
+                    self._swap_runner(broker, r, to, why)
+                    changed = False  # a troca já avisou o painel
+            if changed:
+                self.hub.publish({"type": "status", **self.snapshot()})
+        except Exception:  # noqa: BLE001 - erro na troca não pode parar o bot (pode estar na conta real)
+            log.exception("Troca de mercado falhou")
+            self._next_market_check = time.monotonic() + SWITCH_RETRY_SECONDS
+
+    def _switch_wait(self, r: AssetRunner, now: float) -> str | None:
+        """O que impede trocar este par agora, ou None se dá para trocar."""
+        if not r.ready:
+            return None  # não carregou (ex.: estava fechado): nada a perder
+        if r.armed:
+            return "entrada armada no par"
+        if any(ap["asset"] == r.asset and ap["status"] in OPEN_APPROVAL for ap in self.approvals):
+            return "pedido de aprovação aberto no par"
+        start, tail = self.switch_window
+        if not start <= now % r.timeframe <= r.timeframe - tail:
+            return "esperando o meio da vela"
+        return None
+
+    def _swap_runner(self, broker: Broker, old: AssetRunner, to: str, why: str) -> None:
+        """Carrega o par novo e só então tira o antigo. Se o novo não carregar, o antigo continua."""
+        log.info("Troca de mercado: %s -> %s (%s)", old.asset, to, why)
+        new = AssetRunner(to, old.timeframe, self._strategies_factory())
+        with self._lock:
+            self.progress = f"trocando {old.asset} por {to} ({why})"
+        self.hub.publish({"type": "status", **self.snapshot()})
+        try:
+            # Sem o dia inteiro de velas de 5 s: o importante é voltar logo a ler os outros pares.
+            self._bootstrap_runner(broker, new, broker.payout_now(to), full_day=False)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Troca de mercado: %s não carregou: %s", to, exc)
+            why = f"{to} não carregou ({exc}); tenta de novo em {SWITCH_RETRY_SECONDS // 60} min"
+            self._switch_retry[to] = (time.monotonic() + SWITCH_RETRY_SECONDS, why)
+            self._drop_runner(broker, new, f"troca de mercado desfeita: {exc}")
+            with self._lock:
+                self.progress = None
+                old.switch_wait = why
+            self.hub.publish({"type": "status", **self.snapshot()})
+            return
+        with self._lock:
+            self.runners = {(to if k == old.asset else k): (new if k == old.asset else v) for k, v in self.runners.items()}
+            if self.focus == old.asset:
+                self.focus = to
+            self.market_swaps.appendleft({"at": self._now(), "from": old.asset, "to": to, "reason": why})
+            self.progress = None
+        new.last_data = time.monotonic()  # o vigia conta o silêncio do par novo a partir de agora
+        self._drop_runner(broker, old, f"trocou para {to}: {why}")
+        self._switch_retry.pop(to, None)
+        self._sync_watcher()
+        self.hub.publish({"type": "reload"})
+        self.hub.publish({"type": "status", **self.snapshot()})
+
+    def _drop_runner(self, broker: Broker, r: AssetRunner, reason: str) -> None:
+        """Encerra um par que saiu do bot: sessão no banco e stream (se o observador não estiver usando)."""
+        with self._lock:
+            r.armed = []
+        if r.session_id is not None:
+            self.db.end_session(r.session_id, reason)
+            r.session_id = None
+        if r.ready and r.asset != self.watcher.asset:
+            try:
+                broker.release_stream(r.asset, r.timeframe)
+            except Exception as exc:  # noqa: BLE001 - a IQ às vezes não confirma
+                log.debug("%s: stream não cancelado: %s", r.asset, exc)
 
     def _fetch_payouts(self, broker: Broker) -> dict[str, float]:
         try:
@@ -873,6 +1081,7 @@ class BotService:
                 elif ap["status"] in ("aguardando", "aprovado") and now > ap["deadline"] + 3:
                     self._close_approval(ap, "não disparou")
                     changed = True
+            changed = self._retry_gale_waits(now) or changed
         if changed:
             self.hub.publish({"type": "armed", "status": self.snapshot()})
 
@@ -892,11 +1101,8 @@ class BotService:
         if not closed:
             with self._lock:
                 closed += r.store.close_forming_if_expired(now - STREAM_GRACE_SECONDS)
-        if closed:
-            r.tradable = broker.tradable(r.asset)  # antes de abrir pedidos de aprovação para a próxima vela
-            fresh = broker.payout_now(r.asset)  # o payout muda ao longo do dia (filtro de payout mínimo)
-            if fresh:
-                r.payout = fresh
+        if closed or r.product_epoch != self._product_epoch:
+            self._refresh_product(broker, r)  # antes de abrir pedidos de aprovação para a próxima vela
         for c in closed:
             self._on_close(r, c)
         forming = r.store.forming
@@ -973,7 +1179,7 @@ class BotService:
                     r.armed.remove(a)
                     self._log_armed(r, a, "ENTROU")
                     changed = True
-                    row = self._store_intra(r, a, "ao_vivo", forming.close)
+                    row = self._store_intra(r, a, "ao_vivo", forming.close, details_extra=self._touch_details(r, a, forming, now))
                     if row:
                         self.hub.publish({"type": "signal", "signal": row})
                     ap = self._approval_for(r, a)
@@ -1044,6 +1250,7 @@ class BotService:
                 self._log_armed(r, a, f"sem ordem: {block}")
                 continue
             ap = {"id": next(self._approval_seq), "asset": r.asset, "timeframe": r.timeframe, "strategy": a.strategy,
+                  "kind": r.kind, "payout": r.payout,
                   "direction": a.direction.value, "setup": a.setup_label, "level_price": a.level_price,
                   "target_ts": a.target_ts, "deadline": a.target_ts + a.window_seconds, "window_seconds": a.window_seconds,
                   "status": "aprovado" if auto else "aguardando", "auto": auto, "veto": self.mode == "automatico_veto",
@@ -1081,7 +1288,7 @@ class BotService:
             if not approve:
                 if ap["status"] not in OPEN_APPROVAL:
                     raise ValueError(f"Esta entrada já foi encerrada ({ap['status']}).")
-                self._close_approval(ap, "cancelado por você" if ap["status"] == "aprovado" else "rejeitado")
+                self._close_approval(ap, "cancelado por você" if ap["status"] in ("aprovado", WAIT_GALE) else "rejeitado")
             elif ap["status"] not in ("aguardando", "disparou"):
                 raise ValueError(f"Esta entrada já foi encerrada ({ap['status']}).")
             elif ap["status"] == "aguardando":
@@ -1097,16 +1304,59 @@ class BotService:
         self.hub.publish({"type": "armed", "status": self.snapshot()})
         return view
 
-    def _send_order(self, ap: dict, price: float | None) -> None:
+    def _retry_gale_waits(self, now: float) -> bool:
+        """Entradas do gale esperando o resultado da ordem anterior: saem assim que ele chega, se a janela ainda
+        estiver aberta; com a janela fechada, ficam bloqueadas e nenhuma ordem sai. Chamar com o lock."""
+        changed = False
+        for ap in self.approvals:
+            if ap["status"] != WAIT_GALE:
+                continue
+            if now > ap["deadline"]:
+                self._close_approval(ap, "bloqueada")
+                ap["note"] = f"o resultado da ordem anterior do gale não chegou dentro da janela de {ap['window_seconds']} s"
+                # fica no histórico de ordens, como as outras entradas bloqueadas (antes só aparecia no cartão)
+                order = self.orders.record_blocked(asset=ap["asset"], timeframe=ap["timeframe"], strategy=ap["strategy"],
+                                                   direction=ap["direction"], ref_price=ap.get("trigger_price"),
+                                                   signal_id=ap.get("signal_id"), payout=ap.get("payout") or self.settings.default_payout,
+                                                   kind=ap.get("kind", BINARY), account=self.account, why=ap["note"])
+                ap["order_id"] = order["id"]
+                changed = True
+            elif not self.orders.waiting_gale(ap["strategy"]):
+                r = self.runners.get(ap["asset"])
+                forming = r.store.forming if r and r.store else None
+                self._send_order(ap, forming.close if forming else ap["trigger_price"], now=now)
+                changed = changed or ap["status"] != WAIT_GALE
+        return changed
+
+    def _send_order(self, ap: dict, price: float | None, now: float | None = None) -> None:
+        now = self._now() if now is None else now
         r = self.runners.get(ap["asset"])
         payout = (r.payout if r else None) or self.settings.default_payout
+        kind = r.kind if r else ap.get("kind", BINARY)
+        ap["kind"], ap["payout"] = kind, payout
+        if r is not None and not r.tradable[0]:  # o tipo da Configuração mudou para um que está fechado neste par
+            self._close_approval(ap, "bloqueada")
+            ap["note"] = r.tradable[1]
+            return
         block = self.filters.entry_block(payout, ap["target_ts"])  # o payout pode ter caído desde o pedido
         if block:
             self._close_approval(ap, "bloqueada")
             ap["note"] = block
             return
+        if now <= ap["deadline"] and self.orders.waiting_gale(ap["strategy"]):
+            # A ordem anterior do gale ainda não tem resultado: espera (dentro da janela) para sair com o valor certo.
+            ap["status"] = WAIT_GALE
+            ap["note"] = "esperando o resultado da ordem anterior do gale"
+            return
+        # "A de maior payout": se a IQ recusar a digital, a binária do par (se o payout dela passa no filtro).
+        fallback = None
+        if r is not None and kind == DIGITAL and self.filters.option_type == BEST:
+            binary_payout = (r.payouts or {}).get(BINARY)
+            if binary_payout and not self.filters.entry_block(binary_payout, ap["target_ts"]):
+                fallback = BINARY
         order = self.orders.submit(asset=ap["asset"], timeframe=ap["timeframe"], strategy=ap["strategy"],
-                                   direction=ap["direction"], ref_price=price, signal_id=ap.get("signal_id"), payout=payout)
+                                   direction=ap["direction"], ref_price=price, signal_id=ap.get("signal_id"), payout=payout,
+                                   kind=kind, fallback=fallback, account=self.account)
         ap["order_id"] = order["id"]
         if order["status"] == "bloqueada":
             self._close_approval(ap, "bloqueada")
@@ -1133,9 +1383,9 @@ class BotService:
             entry = p["entry_price"] if p["entry_price"] is not None else candle.open
             result = judge(p["direction"], entry, candle.close)
             profit = profit_units(result, p["payout"])
-            if self.db.resolve_signal(p["id"], entry=entry, exit_=candle.close, result=result, profit=profit):
-                p.update(entry_price=entry, exit_price=candle.close, result=result, profit=profit)
-                self.hub.publish({"type": "result", "signal": p})
+            row = self.db.resolve_signal(p["id"], entry=entry, exit_=candle.close, result=result, profit=profit)
+            if row:  # se a ordem já fechou, o resultado é o da corretora
+                self.hub.publish({"type": "result", "signal": row})
 
     def _base_fields(self, r: AssetRunner, origin: str) -> dict:
         return {
@@ -1160,7 +1410,22 @@ class BotService:
         fields.update(extra)
         return self.db.add_signal(**fields)
 
-    def _store_intra(self, r: AssetRunner, a: ArmedSetup, origin: str, entry_price: float, **extra) -> dict | None:
+    def _touch_details(self, r: AssetRunner, a: ArmedSetup, forming: Candle, now: float) -> dict:
+        """O momento do toque ao vivo (para o meta-labeling comparar o ao vivo com o replay das velas de 5 s)."""
+        out: dict = {"touch": {"at": round(now, 2), "sec": round(now - a.target_ts, 2), "price": forming.close,
+                               "open": forming.open, "low": forming.low, "high": forming.high}}
+        broker = self._broker
+        if broker is not None:
+            try:
+                mood = broker.traders_mood(r.asset)  # só o que já está em memória: nunca espera
+            except Exception:  # noqa: BLE001 - o sentimento é extra, nunca atrapalha a entrada
+                mood = None
+            if mood is not None:
+                out["mood"] = {"value": mood[0], "age": round(mood[1], 1)}
+        return out
+
+    def _store_intra(self, r: AssetRunner, a: ArmedSetup, origin: str, entry_price: float,
+                     details_extra: dict | None = None, **extra) -> dict | None:
         fields = self._base_fields(r, origin) | {
             "strategy": a.strategy,
             "direction": a.direction.value,
@@ -1168,7 +1433,7 @@ class BotService:
             "candle_ts": a.decision_ts,
             "entry_ts": a.target_ts,
             "entry_price": entry_price,
-            "details": a.to_dict() | {"intravela": True},
+            "details": a.to_dict() | {"intravela": True} | (details_extra or {}),
         }
         fields.update(extra)
         return self.db.add_signal(**fields)

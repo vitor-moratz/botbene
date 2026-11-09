@@ -308,7 +308,12 @@ def test_iq_lista_os_pares_com_limites_e_expiracoes():
     pairs = {p["asset"]: p for p in broker.pairs()}
     assert sorted(pairs) == ["EURUSD-OTC", "EURUSD-op", "FECHADO-OTC", "UM-OTC"]
     assert pairs["EURUSD-OTC"] == {"asset": "EURUSD-OTC", "label": "EUR/USD (OTC)", "category": "Moedas", "payout": 0.88, "open": True,
-                                   "reason": None, "min": 2, "max": 20000, "expiries": [1, 2, 3, 4, 5]}
+                                   "reason": None, "min": 2, "max": 20000, "expiries": [1, 2, 3, 4, 5],
+                                   "market": "otc", "binary": True, "digital": None, "digital_open": None,
+                                   "digital_payout": None, "digital_reason": None, "digital_expiries": [],
+                                   "digital_next_open": None, "digital_next_close": None,
+                                   "next_open": None, "next_close": 4_000_000_000}
+    assert pairs["EURUSD-op"]["market"] == "normal"
     assert pairs["EURUSD-op"]["expiries"] == [1, 2, 3, 4, 5]
     assert pairs["UM-OTC"]["expiries"] == [1]
     assert pairs["FECHADO-OTC"]["open"] is False and "fechado" in pairs["FECHADO-OTC"]["reason"]

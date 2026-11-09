@@ -88,6 +88,7 @@
           <span class="status-icon" aria-hidden="true">■</span>
           <span><span class="status-text">Parado</span><span class="status-sub muted small" id="status-sub"></span></span>
         </div>
+        <div class="gale-chip" id="gale-chip" role="status" aria-live="polite" hidden></div>
       </div>
     </header>
     <div class="banner" id="banner" role="alert" hidden></div>
@@ -99,17 +100,17 @@
         <div class="scope-row" id="p-scope"></div>
         <div class="kpis">
           <div class="kpi kpi-hero">
-            <div class="kpi-label">Resultado de hoje</div>
+            <div class="kpi-label" id="p-profit-label">Resultado de hoje</div>
             <div class="hero-value" id="p-profit">—</div>
-            <div class="kpi-sub" id="p-profit-sub">em entradas · ganho = +payout, perda = −1</div>
+            <div class="kpi-sub" id="p-profit-sub">em dinheiro, só ordens que entraram</div>
           </div>
           <div class="kpi">
-            <div class="kpi-label">Acerto hoje</div>
+            <div class="kpi-label" id="p-wr-label">Acerto hoje</div>
             <div class="kpi-value" id="p-wr">—</div>
             <div class="kpi-sub" id="p-wr-sub">sem entradas ainda</div>
           </div>
           <div class="kpi">
-            <div class="kpi-label">Entradas avaliadas hoje</div>
+            <div class="kpi-label" id="p-n-label">Ordens com resultado hoje</div>
             <div class="kpi-value" id="p-n">—</div>
             <div class="wl-bar" id="p-wl" aria-hidden="true"></div>
             <div class="kpi-sub" id="p-n-sub">—</div>
@@ -134,6 +135,17 @@
                   <div class="price" id="p-price">—</div>
                   <div class="muted small" id="p-price-sub">sem dados</div>
                 </div>
+                <!-- Estratégias e opções do gráfico num menu: com tudo à mostra, os botões empurravam o gráfico para baixo -->
+                <details class="chart-menu" id="chart-menu">
+                  <summary>Marcações no gráfico <span class="cm-count" id="cm-count"></span><span class="cm-caret" aria-hidden="true">▾</span></summary>
+                  <div class="cm-panel">
+                    <div class="cm-title">Setas das estratégias</div>
+                    <div class="toggles cm-list" id="script-toggles" role="group" aria-label="Estratégias no gráfico"></div>
+                    <div class="cm-title">Opções</div>
+                    <label class="check"><input type="checkbox" id="show-backtest"> mostrar sinais do backtest</label>
+                    <label class="check"><input type="checkbox" id="show-reading"> mostrar a leitura do estudo</label>
+                  </div>
+                </details>
                 <button type="button" class="ghost-btn small-btn chart-expand" id="chart-expand" aria-pressed="false" title="Só o gráfico, em tela cheia">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
                   <span id="chart-expand-text">Expandir</span>
@@ -142,15 +154,28 @@
             </div>
             <!-- Par do gráfico: olhar um par não muda o que o bot opera -->
             <div class="pair-tabs" id="pair-tabs" role="group" aria-label="Par no gráfico"></div>
-            <div class="chart-tools">
-              <div class="toggles" id="script-toggles" role="group" aria-label="Estratégias no gráfico"></div>
-              <label class="check"><input type="checkbox" id="show-backtest"> mostrar sinais do backtest</label>
-              <label class="check"><input type="checkbox" id="show-reading"> mostrar a leitura do estudo</label>
-            </div>
+            <!-- Quando o mercado normal (-op) abre e fecha: é quando o bot troca do OTC para o -op e volta -->
+            <div class="market-clock" id="market-clock" role="status" hidden></div>
             <div class="bt-count" id="bt-count" hidden></div>
             <div class="reading-legend" id="reading-legend" hidden></div>
             <div class="chart-box" id="chart-box">
               <div class="readout idle" id="readout">Passe o mouse sobre uma vela para ver os detalhes.</div>
+              <!-- Linhas que você desenha (só com o gráfico expandido). Ficam salvas neste navegador, por par. -->
+              <div class="draw-tools" id="draw-tools" role="toolbar" aria-label="Desenhar linhas no gráfico">
+                <button type="button" data-tool="h" aria-pressed="false" title="Linha horizontal: clique no preço" aria-label="Linha horizontal">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18"/><circle cx="12" cy="12" r="2"/></svg>
+                </button>
+                <button type="button" data-tool="v" aria-pressed="false" title="Linha vertical: clique na vela" aria-label="Linha vertical">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18"/><circle cx="12" cy="12" r="2"/></svg>
+                </button>
+                <button type="button" data-tool="erase" aria-pressed="false" title="Apagar: clique numa linha sua" aria-label="Apagar uma linha">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 20h12M5.5 15.5l9-9 4 4-9 9H7l-1.5-1.5a1.4 1.4 0 0 1 0-2z"/></svg>
+                </button>
+                <button type="button" data-tool="clear" title="Apagar todas as linhas deste par" aria-label="Apagar todas as linhas deste par">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></svg>
+                </button>
+              </div>
+              <div class="draw-hint" id="draw-hint" role="status" hidden></div>
               <div id="chart" class="chart" aria-label="Gráfico de velas com linhas e sinais"></div>
             </div>
             <div class="line-legend" id="line-legend"></div>
@@ -167,6 +192,7 @@
                 <strong id="m-asset">—</strong>
                 <span class="m-payout">Payout <strong id="m-payout">—</strong></span>
               </div>
+              <div class="m-kind" id="m-kind" role="group" aria-label="Tipo de opção" hidden></div>
               <div class="m-row">
                 <label class="m-label" for="m-amount">Valor</label>
                 <div class="stepper">
@@ -201,7 +227,7 @@
                 <h2 id="orders-title">Ordens</h2>
               </div>
               <div id="risk-body" class="risk"></div>
-              <div class="orders-cap">Hoje</div>
+              <div class="orders-cap" id="orders-cap">Hoje</div>
               <ul id="orders" class="feed"><li class="empty">Nenhuma ordem hoje.</li></ul>
             </div>
           </div>
@@ -214,15 +240,16 @@
           </div>
           <div class="stack-col">
             <div class="card">
-              <h2>Placar de hoje por estratégia</h2>
-              <div class="table-wrap"><table class="data">
-                <thead><tr><th>Estratégia</th><th class="num">Entradas</th><th class="num">W · L</th><th class="num">Acerto</th><th class="num">Resultado</th></tr></thead>
+              <h2 id="p-board-title">Placar de hoje por estratégia</h2>
+              <div class="table-wrap"><table class="data board">
+                <thead><tr><th>Estratégia</th><th class="num" id="p-board-n">Ordens</th><th class="num">W · L</th><th class="num">Acerto</th><th class="num">Resultado</th></tr></thead>
                 <tbody id="p-board"><tr><td colspan="5" class="muted">—</td></tr></tbody>
               </table></div>
+              <p class="muted small foot-note" id="p-board-note"></p>
             </div>
             <div class="card feed-card">
               <div class="card-head">
-                <h2>Entradas de hoje</h2>
+                <h2 id="feed-title">Sinais de hoje</h2>
                 <span class="muted small" id="feed-count"></span>
               </div>
               <ul id="feed" class="feed"><li class="empty">Nenhuma entrada hoje ainda.</li></ul>
@@ -247,6 +274,12 @@
           <div class="field"><label for="e-origin">Origem</label>
             <select id="e-origin"><option value="ao_vivo">Ao vivo</option><option value="backtest">Backtest (referência)</option><option value="">Todas</option></select>
           </div>
+          <div class="field"><label for="e-order">Ordem</label>
+            <select id="e-order">
+              <option value="">Todas</option><option value="sent">Viraram ordem</option>
+              <option value="blocked">Bloqueadas ou recusadas</option><option value="none">Sem ordem</option>
+            </select>
+          </div>
         </div>
         <div class="summary-strip" id="e-summary"></div>
         <div class="card">
@@ -254,9 +287,9 @@
             <table class="data">
               <thead><tr>
                 <th>Horário</th><th>Ativo</th><th>Estratégia</th><th>Direção</th><th>Setup</th>
-                <th class="num">Entrada</th><th class="num">Saída</th><th>Resultado</th><th class="num">Resultado (entradas)</th><th>Origem</th>
+                <th class="num">Entrada</th><th class="num">Saída</th><th>Resultado</th><th class="num">Resultado (entradas)</th><th>Ordem</th><th>Origem</th>
               </tr></thead>
-              <tbody id="e-body"><tr><td colspan="10" class="muted">Carregando…</td></tr></tbody>
+              <tbody id="e-body"><tr><td colspan="11" class="muted">Carregando…</td></tr></tbody>
             </table>
           </div>
           <p class="muted small foot-note">Entrada no preço do momento do gatilho (nos registros antigos de scripts, na abertura da vela seguinte ao sinal). Saída = fechamento da vela de entrada (opção de 1 vela). Horários de Brasília. Estas são as entradas avaliadas pelo bot (paper); as ordens de verdade ficam no card de ordens do Painel.</p>
@@ -271,39 +304,41 @@
           </div>
           <div class="field"><label for="d-strategy">Estratégia</label><select id="d-strategy"><option value="">Todas</option></select></div>
           <div class="field"><label for="d-asset">Ativo</label><select id="d-asset"><option value="">Todos</option></select></div>
-          <div class="field"><label for="d-origin">Origem</label>
-            <select id="d-origin"><option value="ao_vivo">Ao vivo</option><option value="backtest">Backtest (referência)</option></select>
+          <div class="field"><label for="d-account">Conta</label>
+            <select id="d-account"><option value="REAL">Real</option><option value="PRACTICE">Demo</option></select>
           </div>
         </div>
+        <p class="muted small d-intro">Só ordens enviadas à corretora, em dinheiro da conta escolhida (demo e real não se somam). Entradas que a estratégia só avaliou, sem ordem, ficam na tela Entradas.</p>
+        <p class="note" id="d-note" hidden></p>
 
         <div class="kpis">
           <div class="kpi kpi-hero">
             <div class="kpi-label" id="d-profit-label">Resultado no mês</div>
             <div class="hero-value" id="d-profit">—</div>
-            <div class="kpi-sub">em entradas · ganho = +payout, perda = −1</div>
+            <div class="kpi-sub" id="d-profit-sub">em dinheiro · só ordens com resultado</div>
           </div>
           <div class="kpi"><div class="kpi-label">Acerto</div><div class="kpi-value" id="d-wr">—</div><div class="kpi-sub" id="d-wr-sub">—</div></div>
-          <div class="kpi"><div class="kpi-label">Entradas avaliadas</div><div class="kpi-value" id="d-n">—</div><div class="wl-bar" id="d-wl" aria-hidden="true"></div><div class="kpi-sub" id="d-n-sub">—</div></div>
+          <div class="kpi"><div class="kpi-label">Ordens com resultado</div><div class="kpi-value" id="d-n">—</div><div class="wl-bar" id="d-wl" aria-hidden="true"></div><div class="kpi-sub" id="d-n-sub">—</div><div class="kpi-sub" id="d-n-extra"></div></div>
           <div class="kpi"><div class="kpi-label">Mínimo para empatar</div><div class="kpi-value" id="d-be">—</div><div class="kpi-sub">1 ÷ (1 + payout)</div></div>
         </div>
 
         <div class="grid-2">
           <div class="card">
             <h2 id="d-cols-title">Resultado por dia</h2>
-            <p class="muted small">Em entradas. Para cima = ganhou no período; para baixo = perdeu.</p>
+            <p class="muted small">Em dinheiro. Para cima = ganhou no período; para baixo = perdeu.</p>
             <div id="d-cols" class="cols"></div>
           </div>
           <div class="card">
             <h2>Saldo acumulado</h2>
-            <p class="muted small">Soma das entradas, em ordem de tempo.</p>
+            <p class="muted small">Soma do resultado das ordens, em ordem de tempo.</p>
             <div id="d-equity" class="equity"></div>
-            <div id="d-equity-empty" class="empty-state" hidden>Nenhuma entrada no período.</div>
+            <div id="d-equity-empty" class="empty-state" hidden>Nenhuma ordem no período.</div>
           </div>
         </div>
 
         <div class="card">
           <h2>Acerto por estratégia</h2>
-          <p class="muted small">Barra = acerto; faixa clara = intervalo de confiança de 95% (quanto o número ainda pode variar); traço = mínimo para empatar. Só dá para confiar quando a faixa inteira passa do traço.</p>
+          <p class="muted small">Barra = acerto nas ordens; faixa clara = intervalo de confiança de 95% (quanto o número ainda pode variar); traço = mínimo para empatar. Só dá para confiar quando a faixa inteira passa do traço. A entrada manual aparece numa linha própria.</p>
           <div id="d-bars" class="bars"></div>
         </div>
 
@@ -311,18 +346,24 @@
           <div class="card">
             <h2>Por setup</h2>
             <div class="table-wrap"><table class="data"><thead><tr>
-              <th>Estratégia</th><th>Setup</th><th class="num">Entradas</th><th class="num">Acerto</th><th class="num">IC 95%</th><th class="num">Resultado</th>
+              <th>Estratégia</th><th>Setup</th><th class="num">Ordens</th><th class="num">Acerto</th><th class="num">IC 95%</th><th class="num">Resultado</th>
             </tr></thead><tbody id="d-setups"></tbody></table></div>
           </div>
           <div class="card">
             <h2>Por horário <span class="tag">Brasília</span></h2>
             <div class="table-wrap"><table class="data"><thead><tr>
-              <th>Hora</th><th class="num">Entradas</th><th class="num">Acerto</th><th class="num">IC 95%</th><th class="num">Resultado</th>
+              <th>Hora</th><th class="num">Ordens</th><th class="num">Acerto</th><th class="num">IC 95%</th><th class="num">Resultado</th>
             </tr></thead><tbody id="d-hours"></tbody></table></div>
             <h2 class="mt">OTC × mercado normal</h2>
             <div class="table-wrap"><table class="data"><thead><tr>
-              <th>Mercado</th><th class="num">Entradas</th><th class="num">Acerto</th><th class="num">IC 95%</th><th class="num">Resultado</th>
+              <th>Mercado</th><th class="num">Ordens</th><th class="num">Acerto</th><th class="num">IC 95%</th><th class="num">Resultado</th>
             </tr></thead><tbody id="d-markets"></tbody></table></div>
+            <div id="d-types-wrap" hidden>
+              <h2 class="mt">Binária × digital</h2>
+              <div class="table-wrap"><table class="data"><thead><tr>
+                <th>Tipo</th><th class="num">Ordens</th><th class="num">Acerto</th><th class="num">IC 95%</th><th class="num">Resultado</th>
+              </tr></thead><tbody id="d-types"></tbody></table></div>
+            </div>
           </div>
         </div>
       </section>
@@ -370,13 +411,22 @@
               <label><input type="checkbox" name="cfg-script" value="wiki_pro"> <span>Setas do WIKI PRO V2.1</span></label>
             </fieldset>
             <fieldset class="cfg-checks">
-              <legend>Pares que o bot acompanha <span class="muted small">(até 8)</span></legend>
-              <p class="muted small">Na IQ, a binária dos pares normais é o instrumento com final <strong>-op</strong> (EURUSD-op). Os com final -OTC costumam abrir quando o mercado normal fecha, com estatística separada. Par fechado para binária continua sendo avaliado, mas não pede aprovação.</p>
+              <legend>Pares que o bot acompanha <span class="muted small">(até <span id="cfg-max-assets">8</span>)</span></legend>
+              <p class="muted small">Na IQ, os pares normais são os com final <strong>-op</strong> (EURUSD-op). Os com final -OTC costumam abrir quando o mercado normal fecha, com estatística separada. Par fechado para o tipo de opção escolhido continua sendo avaliado, mas não pede aprovação. Cada par a mais deixa o início do bot alguns segundos mais lento, e todos dividem o mesmo stop loss e o mesmo limite de entradas.</p>
               <div class="pair-groups" id="cfg-assets"></div>
               <div class="cfg-actions">
-                <input id="cfg-asset-new" placeholder="outro par, ex.: USDCHF-op" spellcheck="false" maxlength="20">
+                <input id="cfg-asset-new" placeholder="outro par, ex.: USDCHF-OTC" spellcheck="false" maxlength="20" list="cfg-asset-list" autocomplete="off">
+                <datalist id="cfg-asset-list"></datalist>
                 <button type="button" class="ghost-btn" id="cfg-asset-add">Adicionar</button>
               </div>
+              <label id="cfg-auto-market-row" hidden><input type="checkbox" id="cfg-auto-market"> <span>Trocar sozinho entre OTC e mercado normal<br><span class="muted small">Quando o mercado normal abre, o bot passa do EURUSD-OTC para o EURUSD-op; quando ele fecha, volta para o OTC. Vale na hora, mesmo com o bot rodando. A troca espera o par ficar sem entrada armada e sem pedido aberto, não vai para um mercado que fecha em menos de 30 min e só vai para o normal se o payout dele passar do mínimo.</span></span></label>
+            </fieldset>
+            <fieldset class="cfg-radio" id="cfg-option-row" hidden>
+              <legend>Tipo de opção</legend>
+              <label><input type="radio" name="cfg-option" value="binary"> <span><strong>Binária</strong><br><span class="muted small">Payout fixo, definido na hora da compra.</span></span></label>
+              <label><input type="radio" name="cfg-option" value="digital"> <span><strong>Digital</strong><br><span class="muted small">Payout que a IQ recalcula o tempo todo; vale o da hora da compra. Par fechado para digital fica só anotado (o bot não troca sozinho para a binária).</span></span></label>
+              <label><input type="radio" name="cfg-option" value="best"> <span><strong>A de maior payout</strong><br><span class="muted small">A cada vela, o bot compara a binária e a digital de cada par e a ordem vai na que paga mais (no empate, binária). Payout maior baixa o acerto mínimo para não perder.</span></span></label>
+              <p class="muted small">Na IQ, a binária e a digital do mesmo par usam o mesmo preço: o gráfico e as estratégias não mudam, só o produto comprado. Vale na hora, mesmo com o bot rodando.</p>
             </fieldset>
             <div class="field"><label for="cfg-timeframe">Vela</label>
               <select id="cfg-timeframe"><option value="60">1 minuto</option><option value="120">2 minutos</option><option value="300">5 minutos</option></select>
@@ -405,12 +455,37 @@
             </fieldset>
             <fieldset class="cfg-checks">
               <legend>Martingale com análise</legend>
-              <label><input type="checkbox" id="cfg-martingale"> <span>Ligar martingale<br><span class="muted small">Depois de uma perda, a próxima entrada <strong>válida da estratégia e aprovada por você</strong> vale mais, para recuperar o ciclo. Nunca entra às cegas na vela seguinte, e só uma ordem fica aberta por vez.</span></span></label>
+              <label><input type="checkbox" id="cfg-martingale"> <span>Ligar martingale<br><span class="muted small">Depois de uma perda, a próxima entrada <strong>válida da estratégia e aprovada por você</strong> vale mais, para recuperar o ciclo. Nunca entra às cegas na vela seguinte. Cada estratégia marcada tem o seu próprio ciclo, com uma ordem aberta por vez em cada uma. Se a entrada seguinte cair logo na vela depois da perda, o bot espera alguns segundos pelo resultado, dentro da janela de entrada.</span></span></label>
               <div class="field"><label for="cfg-gale-levels">Máximo de gales por ciclo</label>
                 <select id="cfg-gale-levels"><option value="1">1 gale</option><option value="2">2 gales</option></select>
               </div>
+              <div id="cfg-max-cycles-row" hidden>
+                <div class="field"><label for="cfg-max-lost-cycles">Stop de ciclo: parar depois de X ciclos perdidos</label><input id="cfg-max-lost-cycles" type="number" min="1" max="100" step="1" placeholder="sem stop de ciclo"></div>
+                <p class="muted small">Ciclo perdido é quando perde a entrada e todos os gales. Conta os ciclos de todas as estratégias juntas na sessão; ao chegar no número, nenhuma entrada nova sai (como no stop loss). Deixe vazio para desligar.</p>
+              </div>
+              <div id="cfg-gale-strats-row" class="gale-strats" hidden>
+                <span class="field-label">Estratégias que usam o gale</span>
+                <div id="cfg-gale-strats"></div>
+                <p class="muted small">Só vale para as que estão em Operar. Cada marcada tem o seu ciclo: a perda de uma não aumenta a entrada da outra, e a ordem aberta de uma não segura a outra. As não marcadas entram sempre com o valor normal. O stop loss reserva os gales que ainda podem vir em todos os ciclos abertos. Stop win, stop loss, máximo de entradas e perdas seguidas continuam contando todas juntas.</p>
+              </div>
               <p class="note small" id="cfg-gale-example"></p>
             </fieldset>
+          </div>
+
+          <div class="card">
+            <h2>Sons</h2>
+            <p class="muted small">Avisos do pedido de entrada: um som quando o pedido aparece, outro quando a ordem sai e outro quando o pedido termina sem ordem (o preço não chegou ao gatilho, a janela fechou, a gestão de risco ou a corretora barrou). Quando você mesmo rejeita ou cancela, não toca. O volume vale na hora e só neste computador. O navegador só toca som depois do primeiro clique na janela.</p>
+            <div class="snd-row">
+              <label for="snd-volume">Volume</label>
+              <input id="snd-volume" type="range" min="0" max="100" step="5">
+              <span class="small muted" id="snd-volume-text"></span>
+            </div>
+            <div class="cfg-actions">
+              <button type="button" class="ghost-btn" data-sound="card">▶ Pedido novo</button>
+              <button type="button" class="ghost-btn" data-sound="entrada">▶ Entrou (ordem enviada)</button>
+              <button type="button" class="ghost-btn" data-sound="sem_ordem">▶ Sem ordem</button>
+              <button type="button" class="ghost-btn" id="snd-demo">Ver um pedido de exemplo</button>
+            </div>
           </div>
 
           <div class="card">
@@ -432,18 +507,22 @@
   </div>
 
   <div id="tooltip" class="tooltip" hidden></div>
-  <!-- Todos os pares de binária da IQ, para olhar no gráfico (e operar na mão) -->
+  <!-- Todos os pares da IQ (binária e digital), para olhar no gráfico (e operar na mão, só binária) -->
   <div class="picker-back" id="pair-picker" hidden>
     <div class="picker" role="dialog" aria-modal="true" aria-labelledby="pp-title">
       <div class="picker-head">
         <h2 id="pp-title">Escolher o par do gráfico</h2>
         <button type="button" class="ghost-btn small-btn" id="pp-close">Fechar</button>
       </div>
-      <p class="muted small">Olhar um par não muda o que o bot opera: isso fica na Configuração.</p>
+      <p class="muted small">Olhar um par não muda o que o bot opera: isso fica na Configuração. Cada par mostra a <strong>binária</strong> e a <strong>digital</strong> com o payout de cada uma (verde = aberta agora). Os pares só de digital também podem ser escolhidos: o bot opera neles com o tipo de opção "Digital" ou "A de maior payout".</p>
       <input type="search" id="pp-search" placeholder="Buscar: EUR, BTC, Apple…" autocomplete="off" spellcheck="false" aria-label="Buscar par">
       <div class="picker-filters">
         <div class="segmented" id="pp-cats" role="group" aria-label="Categoria"></div>
         <label class="check"><input type="checkbox" id="pp-open" checked> só abertos agora</label>
+      </div>
+      <div class="picker-filters">
+        <div class="segmented" id="pp-market" role="group" aria-label="Mercado"></div>
+        <div class="segmented" id="pp-type" role="group" aria-label="Tipo"></div>
       </div>
       <div class="muted small" id="pp-note"></div>
       <ul class="picker-list" id="pp-list"></ul>

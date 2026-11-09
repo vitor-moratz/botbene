@@ -11,6 +11,11 @@ Medida na base de pesquisa (velas de 5 s para ver dentro do minuto): ajuste 62,0
 conferência (período que nenhum ajuste viu) 56,4% em 140; em 6 pares novos, sem ajuste, 53,8% em 303.
 Fora da amostra, ~54% — o mesmo que o empate com payout de 84% (54,3%). Melhor estratégia encontrada,
 mas sem vantagem comprovada: precisa de confirmação ao vivo.
+
+v2 (`retracao_comando_v2`, regra congelada em 08/11/2026, docs/estrategia.md seção A2): a mesma regra, mas pula o
+comando que é a 3ª vela seguida (ou mais) da mesma cor. Pernada esticada não aceita retração (pág. 131). Doji não conta
+nem quebra a sequência. Nos pares -op: ajuste 60,3% (242) contra 57,4% (326) da v1; conferência 55,1% (107) contra
+53,7% (147). A v1 continua igual: o Score LDP v1 usa ela por dentro.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from app.strategies.base import Direction
 from app.strategies.ldp_apostila import ArmedSetup, Plan
 
 NAME = "retracao_comando"
+NAME_V2 = "retracao_comando_v2"
 
 
 @dataclass(frozen=True)
@@ -33,6 +39,7 @@ class RetracaoConfig:
     gap_tol_pct: float = 0.10
     gap_floor_atr: float = 0.05
     atr_period: int = 14
+    max_run_length: int | None = None  # v2: no máximo N velas seguidas da mesma cor, contando o comando
 
 
 class RetracaoComando:
@@ -60,6 +67,9 @@ class RetracaoComando:
             return Plan(step.index, [], [f"vela sem força: corpo {abs(body) / rng:.0%} da amplitude (mínimo {cfg.min_body_ratio:.0%})"])
         if rng < cfg.min_range_atr * atr:
             return Plan(step.index, [], [f"vela pequena: {rng / atr:.1f} ATR (mínimo {cfg.min_range_atr:.1f})"])
+        if cfg.max_run_length is not None and step.run_length > cfg.max_run_length:
+            return Plan(step.index, [], [f"pernada esticada: {step.run_length} velas seguidas da mesma cor "
+                                         f"(máximo {cfg.max_run_length}, pág. 131)"])
         direction = Direction.CALL if body > 0 else Direction.PUT
         depth = cfg.depth_atr * atr
         setup = ArmedSetup(
@@ -77,8 +87,17 @@ class RetracaoComando:
             prev_range=rng,
             gap_tol_pct=cfg.gap_tol_pct,
             confluences={},
-            strategy=NAME,
+            strategy=self.name,
             open_offset=depth,
             gap_floor=cfg.gap_floor_atr * atr,
         )
         return Plan(step.index, [setup], [])
+
+
+class RetracaoComandoV2(RetracaoComando):
+    """Retração no comando v2: igual à v1, mas não entra em pernada esticada (3ª vela seguida ou mais da mesma cor)."""
+
+    name = NAME_V2
+
+    def __init__(self, cfg: RetracaoConfig | None = None, timeframe: int = 60) -> None:
+        super().__init__(cfg or RetracaoConfig(max_run_length=2), timeframe)

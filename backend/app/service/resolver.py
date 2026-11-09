@@ -66,12 +66,12 @@ class PendingResolver:
                     if c is not None:
                         entry = p["entry_price"] if p["entry_price"] is not None else c.open
                         result = judge(p["direction"], entry, c.close)
-                        if self.db.resolve_signal(p["id"], entry=entry, exit_=c.close, result=result,
-                                                  profit=profit_units(result, p["payout"])):
+                        row = self.db.resolve_signal(p["id"], entry=entry, exit_=c.close, result=result,
+                                                     profit=profit_units(result, p["payout"]))
+                        if row:  # se a ordem já fechou, o resultado é o da corretora
                             resolved += 1
                             if self.hub:
-                                p.update(entry_price=entry, exit_price=c.close, result=result)
-                                self.hub.publish({"type": "result", "signal": p})
+                                self.hub.publish({"type": "result", "signal": row})
                     elif now - p["entry_ts"] > self.cancel_after:
                         self.db.resolve_signal(p["id"], entry=p["entry_price"], exit_=None, result=CANCELED, profit=0.0)
                 i += len(chunk)

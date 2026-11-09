@@ -21,3 +21,11 @@ def judge(direction: str, entry: float, exit_: float) -> str:
 
 def profit_units(result: str, payout: float) -> float:
     return {WIN: payout, LOSS: -1.0}.get(result, 0.0)
+
+
+def order_units(result: str, profit: float | None, amount: float | None) -> float | None:
+    """Resultado de uma ordem da corretora em entradas: o payout pago de fato na vitória, -1 na perda, 0 no empate.
+    None na vitória sem valor gravado (quem usa cai no payout do sinal)."""
+    if result == WIN:
+        return round(profit / amount, 4) if profit is not None and amount else None
+    return -1.0 if result == LOSS else 0.0

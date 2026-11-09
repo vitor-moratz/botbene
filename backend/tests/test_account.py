@@ -22,7 +22,7 @@ def make_client(tmp_path):
 def test_real_so_com_confirmacao_e_nao_pela_tela_de_configuracao(tmp_path):
     with make_client(tmp_path) as client:
         info = client.get("/api/account").json()
-        assert info["chosen"] == "PRACTICE" and info["balance"] == 10_000.0
+        assert info["chosen"] == "PRACTICE" and info["balance"] == 10_000.0 and info["bonus"] == 0.0
         r = client.post("/api/account", json={"account": "REAL"})
         assert r.status_code == 400 and "REAL" in r.json()["detail"]
         assert client.get("/api/config").json()["account"] == "PRACTICE"
@@ -54,3 +54,12 @@ def test_conta_escolhida_libera_a_real_so_quando_escolhida(tmp_path):
     store.update({"account": "REAL"})
     assert chosen_account(settings, store) == (AccountType.REAL, True)
     assert chosen_account(settings, None) == (AccountType.PRACTICE, False)  # sem a tela, vale o .env
+
+
+def test_saldo_vem_com_o_bonus_separado(tmp_path):
+    """O site da IQ soma o bônus ao saldo; o painel mostra os dois separados."""
+    with make_client(tmp_path) as client:
+        broker = client.app.state.bot.shared_broker()
+        broker.balance_info = lambda: (65.97, 78.0)
+        info = client.get("/api/account").json()
+        assert (info["balance"], info["bonus"], info["error"]) == (65.97, 78.0, None)

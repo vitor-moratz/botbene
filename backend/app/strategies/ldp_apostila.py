@@ -88,6 +88,8 @@ class ArmedSetup:
     # abre, level_price é uma estimativa a partir do fechamento anterior; na abertura é recalculado.
     open_offset: float | None = None
     gap_floor: float = 0.0  # GAP tolerado no mínimo (em preço), além do % da amplitude
+    # Anotações que não decidem nada (vão para os detalhes do sinal). Ex.: as confluências da Bollinger + RCI.
+    extra: dict = field(default_factory=dict)
 
     @property
     def score(self) -> int:
@@ -96,7 +98,8 @@ class ArmedSetup:
     @property
     def setup_label(self) -> str:
         trig = {"retracao": "retração", "reversao": "reversão", "throwback": "throwback",
-                "comando": "retração no comando", "score": "score"}[self.trigger]
+                "comando": "retração no comando", "score": "score", "esticao": "esticão", "deeplob": "DeepLOB",
+                "bb_rci": "Bollinger + RCI", "bb_rci_v2": "Bollinger + RCI v2"}[self.trigger]
         return f"{trig} · {self.level_sources[0]}" if self.level_sources else trig
 
     def level_for_open(self, open_price: float) -> float:
@@ -140,21 +143,28 @@ def touched(setup: ArmedSetup, low: float, high: float) -> bool:
     return high >= setup.level_price - setup.touch_tol
 
 
-def simulate_entry(setup: ArmedSetup, subcandles: Iterable[Candle]) -> tuple[float | None, str]:
-    """Backtest do gatilho com velas curtas (5 s) da vela de entrada. Entrada = fechamento da
-    vela curta em que o toque aconteceu (o preço do momento, não o preço ideal da marcação)."""
+def touch_bar(setup: ArmedSetup, subcandles: Iterable[Candle]) -> tuple[Candle | None, list[Candle], str]:
+    """A vela curta (5 s) em que o gatilho tocou, as velas curtas da janela até ela (inclusive) e o motivo.
+    Vela None = não entrou (o motivo diz por quê). É o mesmo critério do bot ao vivo."""
     end = setup.target_ts + setup.window_seconds
     subs = sorted((s for s in subcandles if setup.target_ts <= s.ts < end), key=lambda s: s.ts)
     if not subs:
-        return None, "sem dados intravela"
+        return None, [], "sem dados intravela"
     if not gap_ok(setup, subs[0].open):
-        return None, "GAP na abertura"
+        return None, [], "GAP na abertura"
     if setup.open_offset is not None:
         setup = replace(setup, level_price=setup.level_for_open(subs[0].open))
-    for s in subs:
+    for i, s in enumerate(subs):
         if touched(setup, s.low, s.high):
-            return s.close, "tocou"
-    return None, "não buscou a marcação"
+            return s, subs[: i + 1], "tocou"
+    return None, [], "não buscou a marcação"
+
+
+def simulate_entry(setup: ArmedSetup, subcandles: Iterable[Candle]) -> tuple[float | None, str]:
+    """Backtest do gatilho com velas curtas (5 s) da vela de entrada. Entrada = fechamento da
+    vela curta em que o toque aconteceu (o preço do momento, não o preço ideal da marcação)."""
+    bar, _, why = touch_bar(setup, subcandles)
+    return (bar.close if bar is not None else None), why
 
 
 # ---------------------------------------------------------------------- estratégia

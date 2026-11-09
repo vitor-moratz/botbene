@@ -8,8 +8,14 @@
 | Estratégia | Papel no bot | Quando entra | Acerto em dados que ela nunca viu |
 |---|---|---|---|
 | **Score LDP v1 (combo)** | **Principal desde 06/11/2026.** Junta as cinco estratégias de dentro da vela e quatro padrões; entra com 3 de 4 sobre a retração no comando e, quando pula, diz na tela o que faltou (seção 2d) | Dentro da vela seguinte ao comando, nos primeiros 15 s | Em validação a partir de 07/11. Antes de congelar: 62,9% em 89 entradas fora do período de escolha |
+| Apostila · retração no comando v2 | **Nova (08/11/2026), em validação.** A mesma regra, mas pula a pernada esticada: comando que é a 3ª vela seguida da mesma cor (seção A2) | Dentro da vela seguinte ao comando, nos primeiros 15 s | 54,2% (107) nos `-op` e 54,8% (42) nos OTC, contra 53,7% e 48,1% da v1 nos mesmos dias |
 | Apostila · retração no comando | Base do score. Sozinha, fica em Observar | Dentro da vela seguinte ao comando, nos primeiros 15 s | **~54%** (440 entradas) · empate 54,3% |
-| Apostila · marcações | Desligada por padrão; pode observar ou operar, mas não é recomendada | Dentro da vela, nos primeiros 15 s | 48% (562) |
+| Apostila · marcações | Desligada por padrão; pode observar ou operar, mas não é recomendada | Dentro da vela, nos primeiros 15 s | 48% (562); revisão de 08/11: 51% (2.293) |
+| Estudo · retração no lote, reversão A e B | Só observar, ou desligar: nenhuma passou na revisão de 08/11 (Parte 2, seção 7b) | Dentro da vela, nos primeiros 15 s | 50% a 53% |
+| Pesquisa · esticão rápido | **Nova (08/11/2026), só Observar** (a configuração não deixa operar). Saiu dos dados, não da apostila: depois de vela grande, entra contra o disparo do início do minuto (seção A3) | Dentro da vela seguinte à vela grande, nos primeiros 10 s | 61,1% (18) nos `-op`, poucas entradas; no OTC não funciona |
+| Pesquisa · Bollinger + RCI | **Nova (09/11/2026), a pedido do dono.** Bollinger 20/2 tocada com RCI 9 em ±80, entra contra. Pode Observar ou Operar (seção A5) | No início da vela seguinte ao sinal, ~1 vez a cada 8 min por par | 50,0% (33.841) nos `-op` e 50,1% (33.388) no OTC: cara ou coroa |
+| Pesquisa · Bollinger + RCI v2 | **Nova (09/11/2026), só Observar.** A v1 só quando Gator dormindo, MACD virando e (nos pares normais) Weis Wave mais fraca (seção A6) | No início da vela seguinte ao sinal; rara (~1% dos sinais da v1) | Medindo no ao vivo a partir de 09/11 |
+| Pesquisa · DeepLOB (IA) | **Nova (08/11/2026), só Observar.** Rede do artigo DeepLOB treinada nas velas de 5 s; reprovada no estudo, fica para conferir ao vivo (seção A4) | No início da vela seguinte, quando a probabilidade passa do limiar | 48,2% (1.787) no dia de seleção dos `-op`; OTC sem sinal (fica em silêncio) |
 | LDP v1.3 (script da IQ) | Script: só desenho no gráfico | No bot, não entra | 49,1% (97 mil) |
 | LDP v1.3 + regra das linhas | Só na ferramenta de pesquisa | No bot, não entra | 48,8% (64 mil) |
 | WIKI PRO V2.1 (script da IQ) | Script: só desenho no gráfico | No bot, não entra | 49,3% (56 mil) |
@@ -66,7 +72,125 @@ Depois de um comando, o preço que volta para dentro dele tende a ser repelido: 
 
 **Filtros extras.** A maioria **não se sustentou**: RSI entre 30 e 70, tendência pela EMA 21 e toque só depois de 5 s chegaram a 65-70% no ajuste e caíram para ~52% na conferência. Por isso a regra é simples de propósito.
 
-Um filtro foi bem nos dois períodos: só operar quando o comando **não** rompeu a máxima (no CALL) ou a mínima (no PUT) das 10 velas anteriores. Deu 69% no ajuste e 63% na conferência, mas com só ~50 entradas em cada. Faz sentido pela apostila (comando dentro da região, não esticado). Fica como **candidato** a testar nas próximas semanas de dados, que nenhuma regra viu, antes de entrar no bot.
+Um filtro foi bem nos dois períodos: só operar quando o comando **não** rompeu a máxima (no CALL) ou a mínima (no PUT) das 10 velas anteriores. Deu 69% no ajuste e 63% na conferência, mas com só ~50 entradas em cada. Faz sentido pela apostila (comando dentro da região, não esticado). Fica como **candidato** a testar nas próximas semanas de dados, que nenhuma regra viu, antes de entrar no bot. Na revisão de 08/11 ele oscilou: ajudou com recuo de 0,8 ATR e atrapalhou com 1,0 ATR. Por isso a v2 usou outro sinal de "esticado", que foi estável (seção A2).
+
+## A2. Retração no comando v2 (`retracao_comando_v2`)
+
+**Regra congelada em 08/11/2026.** É a retração no comando com **uma mudança**:
+
+- **Pernada esticada não entra.** Se o comando é a **3ª vela seguida (ou mais) da mesma cor**, pula. Na apostila, pernada íngreme não aceita retração (pág. 131). Doji não conta nem quebra a sequência.
+- O resto é igual à v1: vela de comando (corpo ≥ 60%, amplitude ≥ 1,5 ATR), GAP aborta, recuo de 0,8 ATR nos 15 s iniciais, entrada a favor do comando, vencimento no fim da vela.
+
+A v1 continua no bot sem mudança, porque o Score LDP v1 usa a v1 por dentro. A v2 só arma em velas em que a v1 também armaria, então a v2 é um pedaço da v1.
+
+**Como foi escolhida.** Pares `-op` e OTC, velas de 5 s de 31/10 a 08/11/2026. Ajuste antes de 05/11; conferência de 05/11 em diante, vista uma vez só, depois de a regra ser escrita. Payout de 84%, empate 54,3%.
+
+| Teste | v1 | v2 |
+|---|---|---|
+| Ajuste · `-op` | 57,4% (336) | **60,5% (248)** |
+| Ajuste · OTC | 55,9% (93) | **58,0% (69)** |
+| Conferência · `-op` | 53,7% (147) | **54,2% (107)** |
+| Conferência · OTC | 48,1% (54) | **54,8% (42)** |
+
+O "não esticado" foi o filtro mais estável do ajuste: deu de +2 a +4 pontos em todas as variações testadas (recuo de 0,8, 1,0 e 1,2 ATR; vela de comando, de força ou média).
+
+**O que isso quer dizer.** A v2 ficou melhor que a v1 nos quatro testes, mas a melhora é pequena. Na conferência dos `-op`, ela ficou no **empate** (54,2% contra 54,3%). Como a v1, ela **ainda não provou que ganha do payout**. Fica em Observar até ter ~200 entradas ao vivo. Volume esperado: cerca de 3 de cada 4 entradas da v1.
+
+## A3. Esticão rápido (`esticao`)
+
+**Regra congelada em 08/11/2026.** Saiu de um estudo dos dados, sem partir da apostila. Pedido: uma estratégia própria que entregasse 70-80%. Não entrega, e fica só em **Observar**: a configuração recusa Operar até ela provar acerto ao vivo.
+
+**A ideia.** Quando o preço dispara muito logo nos primeiros segundos do minuto, depois de uma vela grande, o disparo costuma ser exagero e volta um pouco até o fim da vela.
+
+1. **ATR** = média das amplitudes das 14 últimas velas fechadas, contando a vela que acabou de fechar.
+2. **Vela grande.** A vela que acabou de fechar tem amplitude de pelo menos **1,5 ATR**, de qualquer cor.
+3. **Arma os dois lados** para a vela seguinte, medidos a partir da abertura dela: **PUT** em abertura + 1,5 ATR e **CALL** em abertura − 1,5 ATR. Vale o lado que tocar primeiro.
+4. **GAP aborta:** a abertura não pode passar de 0,1 ATR do fechamento anterior.
+5. **Gatilho só nos 10 s iniciais.** Entra **contra o disparo**, com vencimento no fim da vela.
+
+**Como foi escolhida.** Velas de 5 s de 12 pares `-op` e 8 OTC. Escolha com os dias antes de 05/11 (`-op`) e 06/11 (OTC); conferência nos últimos 2 dias, vista uma vez só, depois de a regra ser escrita. O código do bot reproduz os números do estudo entrada por entrada.
+
+| Teste | Entradas | Acerto |
+|---|---|---|
+| Escolha · `-op` (02 a 04/11) | 81 | 71,6% |
+| Conferência · `-op` (05 e 06/11), entrada no fechamento da vela de 5 s do toque (como o bot mede) | 18 | **61,1%** (faixa 39-80%) |
+| Conferência · `-op`, entrada no preço exato do gatilho | 18 | 44,4% |
+| OTC, qualquer variação | ~40 | 40-50% |
+
+**O que isso quer dizer.** Os ~72% da escolha não se repetiram, e a conferência tem poucas entradas para dizer algo. Ela depende de entrar rápido, porque o preço volta em segundos. No OTC não há esse efeito, então o que vale é o resultado nos pares normais.
+
+**O que o estudo mostrou além dela.** No OTC, o preço de 5 s não tem memória: correlação entre um movimento e o seguinte de ~0,00, nenhuma ligação com o par `-op` e nenhuma volta à média de 2 a 60 min. Um modelo de aprendizado de máquina com ~50 indicadores acertou 82% nas suas entradas mais confiantes no período de treino e 50-56% nos 2 dias novos. A reversão A, que marcou 59% ao vivo no OTC em 07/11, deu 50,7% em 1.773 entradas nos 9 dias de OTC.
+
+## A4. DeepLOB (IA) (`deeplob_iq`)
+
+**De onde veio.** Do estudo "DeepLOB: um experimento acima de 70%" (E70-DL-001): o modelo público do artigo de Zhang, Zohren e Roberts acerta 75,35% no benchmark FI-2010. Esse número é de outro problema: livro de ofertas de ações (2010) e um rótulo suavizado de 3 classes (alta, estável, baixa). A IQ não fornece livro de ofertas, e o contrato paga só se o preço no vencimento passar da entrada.
+
+**O rótulo explica boa parte dos 75%.** Nas nossas velas de 5 s (mais de 1 milhão de exemplos por mercado), o rótulo suavizado do artigo (média dos próximos preços contra a média dos anteriores) dá **73-75% com uma regra de uma linha** ("preço acima da média recente → alta"), até no OTC, que é sorteio. Metade da "média futura" já é conhecida no presente. No alvo do contrato, a mesma regra dá 50%.
+
+**A regra (congelada em 08/11/2026).**
+1. No fechamento de cada vela M1, a rede lê as **100 últimas velas de 5 s** (≈ 8 min). Por vela: abertura, máxima, mínima e fechamento menos o fechamento anterior, divididos pelo desvio da própria janela, mais o segundo do minuto.
+2. Rede: a do artigo, adaptada para 6 features (convoluções, inception de 3 ramos e LSTM de 64). Probabilidade calibrada (Platt) num dia separado.
+3. Probabilidade de subir ≥ 0,52: anota **CALL**; ≤ 0,48: anota **PUT**. Entrada no 1º preço da vela seguinte, com vencimento no fim dela.
+4. **OTC: em silêncio.** Só M1. Só Observar: a configuração recusa Operar.
+5. Ao vivo, as velas de 5 s são montadas com o preço lido a cada 0,5 s. Na carga do histórico, são as da IQ.
+
+**Como foi medida.** Pré-registro, mesmo protocolo da especificação v1.0. Treino, calibração e seleção em dias separados; teste final só se a seleção aprovasse.
+
+| Mercado | Treino | Calibração | Seleção | Resultado |
+|---|---|---|---|---|
+| OTC | 31/10 a 03/11 | 04/11 | 05/11 | Separação 0,500 (cara ou coroa); probabilidade calibrada igual para tudo (0,504): **NO_TRADE** |
+| `-op` | 01 a 02/11 | 03/11 | 04/11 | Separação 0,493; limiar 0,52: **48,2% em 1.787** (faixa 45,9-50,6%): **NO_TRADE** |
+
+Nos dois mercados, a rede só decorou ruído depois da 1ª época (erro caindo no treino e subindo na calibração). O teste final (05-06/11 e 06-08/11) não foi aberto. O código do bot reproduz o número da seleção entrada por entrada (48,2% em 1.787, 41 empates), e a rede em numpy dá a mesma saída da rede em PyTorch (diferença < 0,0000001).
+
+**Por que está no bot.** Pedido do dono do bot, só para observar: é o teste em dados novos que os estudos exigem. Ela anota em média ~1 entrada por minuto somando os pares normais. Pesos em `backend/app/strategies/models/deeplob_iq_op.npz`; precisa do numpy no ambiente do servidor.
+
+## A5. Bollinger + RCI (`bb_rci`), estudo de 09/11/2026
+
+**A regra (padrão fixado antes de olhar os números).** Bandas de Bollinger 20 / 2 desvios e RCI de 9. A vela k chega na banda de cima com RCI ≥ +80: **PUT**. Chega na de baixo com RCI ≤ -80: **CALL**. Entrada no início da vela k+1, vencimento no fim dela (1 min). Código em `backend/app/strategies/bb_rci.py`, já no formato das estratégias do bot. O cálculo do estudo reproduz o código do bot sinal por sinal (8.144 de 8.144 no EURUSD-op).
+
+**Como foi medida.** Velas M1 de 09/09 a 08/11, com 12 pares `-op` e 8 OTC. Escolha até 18/10 e conferência de 19/10 a 08/11. Grade de 96 variações (2/2,5/3 desvios, toque ou fechou fora, RCI 9 ou 14, nível 80 ou 90, com ou sem "RCI virando", contra ou a favor), escolhida só no período de escolha. Payout 0,85, ou seja, empate em 54,05%.
+
+| | Escolha | Conferência |
+|---|---|---|
+| Padrão `-op` | 50,3% (63.035) | **50,0% (33.841)** |
+| Padrão OTC | 50,2% (63.660) | **50,1% (33.388)** |
+| Melhor variação `-op` (3σ fechou fora, RCI 9 ±90, a favor) | 53,2% (590) | 48,9% (380) |
+| Melhor variação OTC (3σ toque, RCI 14 ±80, a favor) | 52,7% (915) | 52,5% (469); em 8 pares OTC nunca usados (31/10-09/11): **46,4% (181)** |
+
+O padrão dispara muito: ~1 sinal a cada 8 min por par.
+
+**Martingale.** Testado com o `RiskManager` do bot (valor do gale = recupera o ciclo + lucro de uma entrada), uma ordem por vez. Dois tipos: gale imediato (mesmo par, vela seguinte) e "com análise" (como o bot faz: o gale vai na próxima entrada). Período de conferência, entrada R$ 2:
+
+| Padrão, sem stops | sem gale | G1 imediato | G2 imediato | G1 com análise | G2 com análise |
+|---|---|---|---|---|---|
+| `-op` | -R$ 2.063 | -R$ 2.833 | -R$ 3.544 | -R$ 2.742 | -R$ 3.849 |
+| OTC | -R$ 3.094 | -R$ 4.420 | -R$ 6.664 | -R$ 4.243 | -R$ 5.921 |
+
+Com o gale, a taxa de **ciclos** ganhos sobe (50% → 75% no G1 → 87% no G2), mas o acerto **por ordem** continua em 50% e o prejuízo cresce, porque cada ciclo perdido custa R$ 6,36 (G1) ou R$ 15,85 (G2). Na conta, com acerto p por ordem o martingale não muda o resultado por real apostado: -7,5% a 50%, zero a 54,05%, +1,8% a 55%. Ele só move mais dinheiro. Em sessões diárias com a config do usuário (stop win/loss R$ 20, 30 entradas, para em 4 perdas seguidas), o padrão termina vermelho em 11 a 13 de 18 dias nos `-op` e em 13 a 19 de 21 dias no OTC, em todos os modos. Só uma das 40 combinações ficou positiva: a melhor variação OTC com G1 imediato, +R$ 29,67 em 21 dias. Ela foi escolhida depois de ver o resultado e acerta 53,4% por ordem, abaixo do empate. Nos 8 pares OTC nunca usados, a mesma combinação fez -R$ 13,35 sem stops.
+
+**Conclusão.** Bollinger + RCI em M1 é cara ou coroa nos dois mercados, e o martingale só aumenta o prejuízo.
+
+**No bot (09/11/2026), a pedido do dono, apesar do estudo.** Começa Desligada e pode Observar ou Operar (não está travada em Observar como o esticão e o DeepLOB). Entra no 1º preço da vela seguinte ao sinal, como o DeepLOB, e dispara bem mais que as outras: ~1 entrada a cada 8 min por par. Com o martingale ligado, dá para deixar só ela usando o gale (seção B.5).
+
+## A6. Bollinger + RCI v2 (`bb_rci_v2`), criada em 09/11/2026, **só Observar**
+
+**A ideia (do dono do bot).** Somar confluências à Bollinger + RCI para deixá-la mais assertiva, medindo **daqui para frente, no ao vivo**, sem usar velas antigas para decidir. Cada indicador tem um papel que combina com a aposta contra da Bollinger:
+
+| Confluência | Pergunta | A favor quando |
+|---|---|---|
+| Gator (Bill Williams; Alligator 13/8/5 da mediana, deslocadas 8/5/3) | o mercado está de lado? | as duas barras vermelhas na vela do sinal (as médias se juntando, sem tendência acelerando) |
+| MACD 12/26/9 | o empurrão está cansando? | CALL: histograma negativo e maior que o da vela anterior; PUT: o espelho |
+| Weis Wave (ondas de fechamento com virada de 0,5 ATR) | o movimento está perdendo combustível? | a onda mais recente na direção do movimento tem menos volume que a anterior na mesma direção |
+| Fractal (5 velas, só confirmados) | tem um piso ou teto ali? | o toque fica a até 0,5 ATR do último fractal na direção (só anotado, não decide) |
+
+**A regra (congelada em 09/11/2026; mudar = outra versão).** A v2 entra quando a v1 entra **e** Gator dormindo **e** MACD virando **e**, onde há volume, Weis Wave mais fraca. A IQ manda volume (de ticks) só nos pares normais; no OTC vem zero, então lá o Weis não conta. Entrada e vencimento iguais aos da v1. Código em `backend/app/strategies/bb_rci_v2.py` e `bb_rci_confluencias.py`.
+
+**O que fica gravado.** Todo sinal da v1 (que continua decidindo igual) passa a ter as quatro marcações nos detalhes (`extra.confluencias`: true, false ou null = sem dados). Assim dá para avaliar depois cada indicador e outras combinações.
+
+**Frequência esperada.** Contando só quantas vezes entraria (sem olhar resultado) nas velas de 09/11: ~0,3% dos sinais da v1 nos pares normais e ~1,5% no OTC. No sinal da Bollinger o preço acabou de andar forte "em fila", que é justamente quando o Gator está acordado e o MACD acelerando; por isso as confluências raramente concordam.
+
+**A régua (combinada antes de qualquer resultado).** A v2 passa para Operar se, nos mesmos dias ao vivo, tiver pelo menos **5 pontos a mais de acerto por entrada que a v1** (com 150+ entradas da v2), ou **menos de 1 ciclo de G2 perdido a cada 11**. Análises secundárias (não decidem sozinhas): "2 de 3" (~8% dos sinais nos pares normais) e cada indicador sozinho, a partir das marcações gravadas na v1.
 
 ## B. Como operar no BotBene
 
@@ -82,7 +206,7 @@ Na tela **Configuração**:
   - Uma ordem por par e vela: CALL e PUT juntos se anulam; no mesmo sentido, vale a de mais confluências.
   - Ligar ou desligar vale no próximo início do bot; trocar entre Observar e Operar vale na hora.
 - **Ajuda visual no gráfico:** linhas e setas do LDP v1.3 e setas do WIKI PRO. Só desenham: nunca decidem entrada e não entram nas estatísticas.
-- **Pares:** os `-op`, até 8. Hoje são EURUSD, GBPUSD, USDJPY, AUDUSD, EURJPY e EURGBP.
+- **Pares:** os `-op`, até 20. Hoje são EURUSD, GBPUSD, USDJPY, AUDUSD, EURJPY e EURGBP.
 - **Gestão de risco:**
   - valor da entrada (US$ 2 na demo);
   - stop win e stop loss;
@@ -101,19 +225,14 @@ Clique em **Iniciar bot** e **não fique ligando e desligando**. A cada início 
 
 ### 3. O pedido de aprovação
 
-Quando um comando fecha, aparece no topo da tela, em qualquer página, um cartão grande com **bipe**. Isso vale nos modos aprovação e automático com veto.
-- **O gráfico é o centro:**
-  - as últimas 60 velas do par, com zoom e cursor;
-  - a **vela de comando marcada**;
-  - a **linha tracejada do gatilho** e a linha da **abertura** da vela da entrada;
-  - a vela da entrada se mexendo ao vivo.
-- **Ao lado:**
-  - a direção, em destaque;
-  - a contagem regressiva dos 15 s;
-  - o preço do gatilho;
-  - o **preço agora e quantos pips faltam** até o gatilho;
-  - o valor, o vencimento e o botão grande **Aprovar CALL** ou **Aprovar PUT**.
-- **Vários pedidos ao mesmo tempo** viram abas no topo, cada uma com a sua contagem. O mais urgente abre primeiro.
+Quando uma estratégia arma uma entrada, aparece no topo da tela, em qualquer página, uma **linha** com **bipe** (desde 09/11/2026; antes era um cartão grande com um gráfico próprio). Isso vale nos modos aprovação e automático com veto.
+- **Na linha:** a direção, o par, a estratégia, o preço do gatilho, o **preço agora e quantos pips faltam** (quando o gráfico está no par), o valor (com o selo do gale), o vencimento, a contagem regressiva da janela e os botões **Aprovar** e **Rejeitar** (ou **Cancelar entrada** no automático com veto).
+- **A análise é no gráfico principal**, que mostra a linha tracejada do gatilho ("CALL armado" / "PUT armado"):
+  - quando surge um pedido, o gráfico vai sozinho para o par dele;
+  - se você está **analisando outro par** (trocou de par ou mexeu no gráfico no último minuto e meio), ele não troca: a linha pergunta **"Ir para o gráfico desta entrada?"**, com **Ir** e **Ficar aqui**. Depois de "Ficar aqui", o botão **Ver no gráfico** leva até ele quando quiser.
+- **Vários pedidos ao mesmo tempo** viram várias linhas. O mais urgente fica destacado e é o que decide o gráfico.
+- **Resultado:** ordem enviada (com o resultado) ou recusada pela corretora vira um **aviso pequeno no canto de baixo**, que some sozinho. Pedido que terminou sem ordem (o preço não veio, a gestão de risco barrou, você cancelou) não vira aviso: fica na lista de Ordens e em "Últimos setups".
+- No **gráfico expandido**, as linhas ficam embaixo da coluna da direita, sem cobrir o gráfico nem os botões da entrada manual, e o aviso fica no canto de baixo à esquerda.
 - O botão **Tela cheia** fica na barra lateral (ou use F11).
 
 O que cada estado quer dizer:
@@ -163,6 +282,10 @@ O que cada estado quer dizer:
 - **Martingale com análise.** Fica desligado por padrão e a recomendação é manter assim:
   - depois de uma perda, só a próxima entrada **válida e aprovada** vale mais (nunca entra às cegas na vela seguinte);
   - o valor é calculado para recuperar o ciclo, com até 2 gales;
+  - **você escolhe quais estratégias usam o gale** (desde 09/11/2026), e **cada marcada tem o seu ciclo**: a perda de uma não deixa a entrada da outra mais cara, a vitória de uma não fecha o ciclo da outra, e cada ciclo tem uma ordem aberta por vez. As não marcadas entram sempre com o valor normal. Stop win, stop loss, máximo de entradas e perdas seguidas contam todas juntas, e o stop loss reserva os gales que ainda podem vir em todos os ciclos abertos;
+  - até a noite de 09/11/2026 as marcadas dividiam um ciclo só, com uma ordem aberta por vez entre todas. Com a Bollinger + RCI e a retração no comando marcadas, a Bollinger entrava no início de quase toda vela (58 ordens em 58 minutos na sessão das 17:28) e a retração, que dispara de 3 a 12 s depois, achava a vaga ocupada: 6 dos 8 sinais dela depois das 13:38 não viraram ordem;
+  - **stop de ciclo** (opcional): para de abrir entradas depois de X ciclos perdidos inteiros na sessão (perdeu a entrada e todos os gales), somando todas as estratégias;
+  - se a próxima entrada do gale cai logo na vela seguinte à perda, o bot **espera o resultado** da ordem anterior (ele chega ~1 s depois da vela abrir) dentro da janela de entrada, e a ordem sai com o valor certo. Se a janela fechar antes, a entrada fica bloqueada, nenhuma ordem sai, e ela aparece no histórico de ordens como bloqueada, com o motivo (desde 09/11/2026; antes ela era sempre bloqueada);
   - ele não melhora o acerto, só concentra a perda. Com US$ 2 e 1 gale, perder o ciclo custa US$ 6,39 e apaga quase 4 vitórias de US$ 1,68.
 
 ### 6. Quando reavaliar
@@ -455,6 +578,58 @@ O que isso mostra:
 2. A vantagem fica maior quando a vela anterior é forte (o "comando"): é a única combinação que ficou acima do empate nos dois períodos.
 3. Filtros extras que pareciam levar a 65-70% no ajuste caíram para ~52% na conferência. É o mesmo efeito que faz scripts "de 70-90%" falharem: ajustados ao passado, com poucas entradas.
 4. Nada disso é garantia. Fora da amostra, a retração no comando ficou no empate (~54% em 440 entradas). A confirmação de verdade é o resultado ao vivo, que o painel acompanha; a conta real continua bloqueada.
+
+## 7b. Revisão de 08/11/2026: por que as marcações e as estratégias do estudo não funcionam
+
+**Dados.** 20 pares com velas de 5 s: 12 `-op` de 02 a 06/11 e 8 OTC de 31/10 a 08/11. São ~176 mil velas e ~76 mil setups armados pelas estratégias v1, rodadas como o bot roda.
+
+**Método.**
+- **Ajuste:** antes de 05/11.
+- **Conferência:** de 05/11 em diante. Foi vista uma vez só, depois de as regras novas serem escritas.
+- **Simulador conferido contra o bot ao vivo:** das 2.071 entradas de 07 e 08/11, 98% aparecem nos dois. O resultado é o mesmo em 93%, e a diferença mediana no preço de entrada é de 0,07 ATR.
+
+**As v1, no ajuste:**
+
+| Estratégia | Entradas | Acerto | Dispara em |
+|---|---|---|---|
+| Marcações | 3.435 | 51,0% | 36% dos armados |
+| Retração no lote | 8.320 | 50,4% | 42% |
+| Reversão A · força trava | 2.058 | 49,9% | **94%** |
+| Reversão B · força rompe indecisão | 1.564 | 51,0% | 38% |
+| *Retração no comando (referência)* | *419* | *57,0%* | *5%* |
+
+**Diagnóstico.**
+1. **A marcação fica colada na abertura.** A distância mediana até o fechamento é de 0,1 a 0,2 ATR, então o preço toca quase sempre. Entrar perto da abertura dá o mesmo que os scripts de fechamento: cara ou coroa. Na reversão A, a marcação é a própria borda onde a vela de força fechou, e por isso ela entra praticamente na abertura em 94% das vezes.
+2. **Nada da leitura separa as entradas boas das ruins:** confluências (3, 4 ou 5 dão o mesmo acerto), força da marcação, tipo de gatilho, cenário, horário, tendência.
+3. **A vantagem vem de outro lugar: entrar contra um movimento forte nos 15 s iniciais.** Nos `-op`, com recuo de 0,8 ATR em qualquer vela e para qualquer lado, dá 54,4% (3.823). Depois de um comando, sobe para 57,4% (326). É o princípio da retração da apostila, e o comando é a única leitura que comprovadamente aumenta o efeito.
+4. **Com esse gatilho, a leitura das outras estratégias não acrescenta:** marcações 51,8% (199), retração no lote 53,0% (317), reversão B 53,4% (88). Todas abaixo dos 54,4% da referência sem estratégia nenhuma.
+5. **`-op` × OTC.** O efeito do item 3 aparece nos `-op` e quase some nos OTC. Com recuo de 1,0 ATR, qualquer vela, dá 55,3% nos `-op` e 51,4% nos OTC. Os preços OTC são gerados pela própria IQ, fora do mercado. **Nos OTC, nenhuma regra mostrou vantagem medida.**
+
+**Tentado e reprovado.**
+- **Reversão A v2 (esticão depois da força).**
+  - **Regra:** vela de força que fez máxima ou mínima nova das 10 anteriores; nos 15 s iniciais da seguinte, o preço estica 1,0 ATR a favor dela; entra contra.
+  - **Resultado:** 64,5% (169) no ajuste dos `-op`, mas **48,6% (105) na conferência**.
+  - **Por que reprovou:** era o melhor de muitos recortes e não se repetiu. Não entrou no bot.
+- **Marcações, retração no lote e reversão B exigindo recuo de 0,8 ATR até a marcação.** Ficaram abaixo da referência já no ajuste (item 4). Não há versão nova delas.
+
+**Ao vivo, 07 e 08/11, conta real, pares OTC:**
+
+| Estratégia | Acerto |
+|---|---|
+| Retração no lote | 47,8% (1.282) |
+| Marcações | 49,4% (540) |
+| Reversão B | 48,0% (223) |
+| Reversão A | 59,1% (318) |
+| Retração no comando | 65,4% (26) |
+| Score LDP v1 | 2 de 5 |
+
+A reversão A foi bem nesses dois dias, mas na pesquisa oscilou entre 48% e 54%. Com seis estratégias medidas ao mesmo tempo, é esperado que uma pareça boa por acaso. Fica em Observar.
+
+**Recomendações.**
+- **Desligar** marcações, retração no lote e reversão B. Elas só enchem a tela e o banco de entradas sem vantagem.
+- **Reversão A em Observar.**
+- **Operar nos pares `-op`** quando estiverem abertos.
+- **Conflito entre estratégias:** se duas estratégias em **Operar** armarem CALL e PUT na mesma vela, o bot cancela as duas (`_order_candidates`).
 
 ## 8. Ainda não implementado (próximas fases)
 

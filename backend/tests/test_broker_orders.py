@@ -95,3 +95,23 @@ def test_resultado_ainda_aberto_nao_espera():
     start = time.time()
     assert b.order_result(OrderTicket(123, "EURUSD-op", "call", 2.0, "PRACTICE", time.time(), int(time.time()) - 100)) is None
     assert time.time() - start < 0.5  # nunca trava esperando a IQ
+
+
+def test_saldo_e_bonus_da_carteira_em_uso(monkeypatch):
+    """09/11/2026: a IQ mostrava R$ 148,38 e o painel R$ 72,38. A diferença era o bônus, que vem separado do saldo."""
+    from iqoptionapi import global_value
+
+    balances = {"msg": [
+        {"id": 39, "type": 1, "amount": 65.97, "bonus_amount": 78, "currency": "BRL"},
+        {"id": 40, "type": 4, "amount": 73045.12, "bonus_amount": 0, "currency": "USD"},
+    ]}
+    api = FakeApi()
+    api.get_balances = lambda: balances
+    b = broker_with(api)
+    monkeypatch.setattr(global_value, "balance_id", 39)
+    assert b.balance_info() == (65.97, 78.0) and b.balance() == 65.97
+    monkeypatch.setattr(global_value, "balance_id", 40)
+    assert b.balance_info() == (73045.12, 0.0)
+    monkeypatch.setattr(global_value, "balance_id", 99)  # carteira que não veio na resposta
+    with pytest.raises(BrokerError, match="saldo"):
+        b.balance()

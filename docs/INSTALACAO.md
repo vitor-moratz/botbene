@@ -132,7 +132,8 @@ Pronto, está instalado.
 
    - **Estratégias:** cada uma fica em **Desligada**, **Observar** (anota e mede, sem mandar ordem) ou **Operar** (pode mandar ordem, conforme o modo). Deixe **Apostila · retração no comando** em **Operar**. Ligar ou desligar vale no próximo início do bot; trocar entre Observar e Operar vale na hora.
    - **Ajuda visual no gráfico:** as linhas e setas dos scripts (LDP v1.3, WIKI PRO). Eles só desenham: nunca decidem entrada e não entram nas estatísticas.
-   - **Pares:** escolha até 8. Os pares normais da binária terminam em **`-op`** (ex.: `EURUSD-op`). Os `-OTC` costumam abrir quando o mercado normal fecha, como no fim de semana.
+   - **Pares:** escolha até 20. Os pares normais terminam em **`-op`** (ex.: `EURUSD-op`). Os `-OTC` costumam abrir quando o mercado normal fecha, como no fim de semana. Uma instalação nova já vem com os 12 pares `-op` em que a retração no comando foi estudada e com a troca automática entre OTC e mercado normal ligada: o bot opera o `-op` sempre que ele está aberto.
+   - **Tipo de opção:** **Binária** (padrão), **Digital** ou **A de maior payout** (a cada vela, o bot compara a binária e a digital de cada par e entra na que paga mais). As duas usam o mesmo preço na IQ; muda só o produto comprado.
    - **Vela:** 1 minuto.
 5. **Gestão de risco:**
 
@@ -145,7 +146,7 @@ Pronto, está instalado.
    | Pausar depois de X perdas seguidas | Para depois de X perdas em sequência | 4 |
    | Payout mínimo (%) | Não abre pedido nem manda ordem em par com payout menor. Com payout menor, o acerto para empatar sobe (85% → 54,1%, 80% → 55,6%, 75% → 57,1%) | 80 |
    | Operar das / até as | Janela de operação, no horário de Brasília. Vazio = o dia todo. Se o fim for antes do início, passa da meia-noite | Vazio |
-   | Martingale com análise | Depois de uma perda, a próxima entrada **válida da estratégia** vale mais, o bastante para recuperar o ciclo (até 2 gales). Nunca entra às cegas na vela seguinte, e o ciclo inteiro precisa caber no stop loss | Desligado |
+   | Martingale com análise | Depois de uma perda, a próxima entrada **válida da estratégia** vale mais, o bastante para recuperar o ciclo (até 2 gales). Nunca entra às cegas na vela seguinte, e o ciclo inteiro precisa caber no stop loss. Você marca **quais estratégias usam o gale**; as outras entram sempre com o valor normal | Desligado |
 
    *Sessão* = do clique em **Iniciar bot** até o bot parar.
 

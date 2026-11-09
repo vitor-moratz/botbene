@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.analytics.timeline import BRT
 from app.market.candle import normalize_asset, valid_asset
 from app.risk import MAX_GALE_LEVELS, RiskConfig
-from app.strategies.intra import INTRA_NAMES
+from app.strategies.intra import INTRA_NAMES, OBSERVE_ONLY
 
 # sinais = só registra (paper) · aprovacao = você aprova cada entrada · automatico = o bot entra sozinho na demo
 # automatico_veto = entra sozinho, mas o pedido aparece e você pode cancelar antes do gatilho
@@ -27,6 +27,15 @@ ORDER_MODES = ("aprovacao", "automatico", "automatico_veto")
 # off = não roda · observe = anota e mede, sem mandar ordem · operate = pode mandar ordem, conforme o modo
 StrategyState = Literal["off", "observe", "operate"]
 DEFAULT_CHART_SCRIPTS = {"ldp_lines": True, "ldp_arrows": True, "wiki_pro": False}
+# Pares ao mesmo tempo. Cada par a mais deixa o início (e a volta de uma queda) uns segundos mais lento e
+# divide o mesmo stop loss e o mesmo limite de entradas: com mais pares, eles chegam antes.
+MAX_ASSETS = 20
+# Pares de quem instala agora: os 12 do mercado normal ("-op") em que a retração no comando foi estudada. Com a troca
+# automática (ligada por padrão), cada um vai para o "-OTC" quando o normal fecha e volta quando ele abre.
+DEFAULT_PAIRS = ("EURUSD-op", "GBPUSD-op", "USDJPY-op", "AUDUSD-op", "EURJPY-op", "EURGBP-op",
+                 "AUDJPY-op", "NZDUSD-op", "GBPJPY-op", "AUDCAD-op", "EURNZD-op", "GBPAUD-op")
+# Tipo de opção que o bot compra: binária, digital, ou a de maior payout no par naquela vela (service/product.py).
+OptionType = Literal["binary", "digital", "best"]
 
 
 class UserConfig(BaseModel):
@@ -47,6 +56,10 @@ class UserConfig(BaseModel):
     max_consecutive_losses: int | None = Field(4, ge=1, le=100)
     martingale: bool = False  # "com análise": o gale só vale para a próxima entrada válida (e aprovada)
     gale_levels: int = Field(1, ge=1, le=MAX_GALE_LEVELS)
+    # Estratégias que usam o gale, cada uma com o seu ciclo. As outras entram sempre com o valor normal.
+    gale_strategies: list[str] = Field(default_factory=list)
+    # Stop de ciclo: para de abrir entradas depois de N ciclos de gale perdidos inteiros na sessão. Vazio = desligado.
+    max_lost_cycles: int | None = Field(None, ge=1, le=100)
     # Filtros de entrada (valem para pedidos e ordens; o sinal continua sendo registrado para a estatística).
     # Payout mínimo em fração (0.80 = 80%): com payout menor, o acerto para empatar sobe (80% → 55,6%).
     min_payout: float | None = Field(0.80, ge=0.5, le=1.0)
@@ -54,8 +67,13 @@ class UserConfig(BaseModel):
     hours_start: str | None = None
     hours_end: str | None = None
     # Pares normais de binária na IQ terminam em "-op" (o "EURUSD" sem sufixo é outro instrumento).
-    assets: list[str] = Field(default_factory=lambda: ["EURUSD-op"])
+    assets: list[str] = Field(default_factory=lambda: list(DEFAULT_PAIRS))
     timeframe: Literal[60, 120, 300] = 60
+    # Vale na hora, mesmo com o bot rodando (a partir da próxima vela de cada par).
+    option_type: OptionType = "binary"
+    # Troca sozinho entre OTC e mercado normal: opera o "-op" quando ele está aberto e volta para o "-OTC"
+    # quando ele fecha (service/market.py). Vale na hora, mesmo com o bot rodando.
+    auto_market: bool = True
 
     @model_validator(mode="before")
     @classmethod
@@ -64,6 +82,10 @@ class UserConfig(BaseModel):
         if isinstance(data, dict) and "strategies" not in data and "order_strategies" in data:
             data = dict(data)
             data["strategies"] = {name: "operate" for name in data.pop("order_strategies") or [] if name in INTRA_NAMES}
+        if isinstance(data, dict) and "gale_strategies" not in data:
+            # antes da escolha por estratégia, o martingale valia para todas
+            data = dict(data)
+            data["gale_strategies"] = list(INTRA_NAMES) if data.get("martingale") else []
         return data
 
     @field_validator("strategies")
@@ -72,7 +94,24 @@ class UserConfig(BaseModel):
         bad = [s for s in v if s not in INTRA_NAMES]
         if bad:
             raise ValueError(f"não é uma estratégia: {', '.join(bad)}")
+        locked = [s for s in OBSERVE_ONLY if v.get(s) == "operate"]
+        if locked:
+            raise ValueError(f"ainda em validação, só pode ficar em Observar: {', '.join(locked)}")
         return v
+
+    @field_validator("gale_strategies")
+    @classmethod
+    def only_known_gale_strategies(cls, v: list[str]) -> list[str]:
+        bad = [s for s in v if s not in INTRA_NAMES]
+        if bad:
+            raise ValueError(f"não é uma estratégia: {', '.join(bad)}")
+        return [s for s in INTRA_NAMES if s in v]  # sem repetição, na ordem da tela
+
+    @model_validator(mode="after")
+    def gale_needs_strategy(self) -> UserConfig:
+        if self.martingale and not self.gale_strategies:
+            raise ValueError("martingale ligado: marque pelo menos uma estratégia que usa o gale")
+        return self
 
     @field_validator("chart_scripts")
     @classmethod
@@ -121,8 +160,8 @@ class UserConfig(BaseModel):
                 out.append(a)
         if not out:
             raise ValueError("escolha pelo menos um ativo")
-        if len(out) > 8:
-            raise ValueError("no máximo 8 ativos ao mesmo tempo")
+        if len(out) > MAX_ASSETS:
+            raise ValueError(f"no máximo {MAX_ASSETS} pares ao mesmo tempo")
         return out
 
     def entry_block(self, payout: float | None, entry_ts: float) -> str | None:
@@ -140,7 +179,8 @@ class UserConfig(BaseModel):
     def risk(self) -> RiskConfig:
         return RiskConfig(stake=self.stake, stop_win=self.stop_win or None, stop_loss=self.stop_loss or None,
                           max_trades=self.max_trades, max_consecutive_losses=self.max_consecutive_losses,
-                          martingale=self.martingale, gale_levels=self.gale_levels)
+                          martingale=self.martingale, gale_levels=self.gale_levels,
+                          gale_strategies=tuple(self.gale_strategies), max_lost_cycles=self.max_lost_cycles)
 
 
 class ConfigStore:
@@ -199,4 +239,5 @@ class ConfigStore:
         data["has_password"] = source is not None
         data["credentials_source"] = source
         data["strategy_names"] = list(INTRA_NAMES)  # o que a tela de Configuração oferece
+        data["max_assets"] = MAX_ASSETS
         return data

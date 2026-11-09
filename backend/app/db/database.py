@@ -7,12 +7,13 @@ import time
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, func, select, update
+from sqlalchemy import create_engine, event, func, select, text, update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import sessionmaker
 
-from app.db.models import Base, CandleRow, OrderRow, SessionRow, SignalRow
+from app.db.models import Base, CandleRow, MoodRow, OrderRow, SessionRow, SignalRow
 from app.market.candle import Candle
+from app.paper import DRAW, LOSS, WIN, order_units
 
 
 def _by_strategy(q, strategy: str | Sequence[str] | None):
@@ -41,7 +42,7 @@ class Database:
 
     def _add_missing_columns(self) -> None:
         """create_all não altera tabelas que já existem: colunas novas entram aqui (SQLite)."""
-        added = {"orders": {"gale": "INTEGER DEFAULT 0"}}
+        added = {"orders": {"gale": "INTEGER DEFAULT 0", "option_type": "VARCHAR(8) DEFAULT 'binary'"}}
         with self.engine.begin() as conn:
             for table, cols in added.items():
                 have = {row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})")}
@@ -84,6 +85,21 @@ class Database:
                 CandleRow.asset, CandleRow.timeframe, func.count(), func.min(CandleRow.ts), func.max(CandleRow.ts)
             ).group_by(CandleRow.asset, CandleRow.timeframe).order_by(CandleRow.asset, CandleRow.timeframe)
             return [{"asset": a, "timeframe": tf, "count": n, "first_ts": lo, "last_ts": hi} for a, tf, n, lo, hi in s.execute(q)]
+
+    # ------------------------------------------------------------------ sentimento dos traders
+
+    def save_mood(self, rows: Iterable[tuple[str, int, float, float]]) -> None:
+        """(asset, ts, valor, idade em s). A mesma amostra de novo não muda nada."""
+        data = [{"asset": a, "ts": t, "value": v, "age": g} for a, t, v, g in rows]
+        with self.Session.begin() as s:
+            for i in range(0, len(data), 400):
+                s.execute(sqlite_insert(MoodRow).values(data[i : i + 400]).on_conflict_do_nothing(index_elements=["asset", "ts"]))
+
+    def load_mood(self, asset: str, since: int = 0) -> list[tuple[int, float, float]]:
+        """(ts, valor, idade em s) em ordem de horário."""
+        with self.Session() as s:
+            q = select(MoodRow.ts, MoodRow.value, MoodRow.age).where(MoodRow.asset == asset, MoodRow.ts >= since).order_by(MoodRow.ts)
+            return [tuple(r) for r in s.execute(q)]
 
     # ------------------------------------------------------------------ sessões
 
@@ -133,14 +149,61 @@ class Database:
 
     def resolve_signal(
         self, signal_id: int, *, entry: float | None, exit_: float | None, result: str, profit: float, only_pending: bool = True
-    ) -> bool:
-        """Grava o resultado. Por padrão só mexe em sinal ainda pendente (bot e resolvedor nunca brigam)."""
+    ) -> dict | None:
+        """Grava o resultado pelas velas. Por padrão só mexe em sinal ainda pendente (bot e resolvedor nunca brigam).
+        Se a ordem do sinal já fechou na corretora, o resultado continua o dela e o das velas fica em
+        details.corretora.velas. Devolve o sinal gravado, ou None se nada mudou."""
+        sql = (
+            "UPDATE signals SET entry_price = :entry, exit_price = :exit,"
+            " result = coalesce(json_extract(details, '$.corretora.resultado'), :result),"
+            " profit = coalesce(json_extract(details, '$.corretora.lucro'), :profit),"
+            " details = CASE WHEN json_extract(details, '$.corretora') IS NULL THEN details"
+            " ELSE json_set(details, '$.corretora.velas', :result) END"
+            " WHERE id = :id" + (" AND result = 'pendente'" if only_pending else "")
+        )
         with self.Session.begin() as s:
-            stmt = update(SignalRow).where(SignalRow.id == signal_id)
-            if only_pending:
-                stmt = stmt.where(SignalRow.result == "pendente")
-            res = s.execute(stmt.values(entry_price=entry, exit_price=exit_, result=result, profit=profit))
-            return bool(res.rowcount)
+            res = s.execute(text(sql), {"id": signal_id, "entry": entry, "exit": exit_, "result": result, "profit": profit})
+            if not res.rowcount:
+                return None
+            row = s.get(SignalRow, signal_id)
+            return row.to_dict() if row else None
+
+    def apply_order_result(self, signal_id: int, order_id: int, result: str, units: float | None) -> dict | None:
+        """A ordem do sinal fechou na corretora: o resultado dela vale para o sinal, porque é o que a conta viu
+        (a ordem pode ter entrado num preço diferente do toque, por exemplo esperando o gale anterior).
+        O que as velas do bot diziam fica em details.corretora.velas. Sinal ainda pendente fica pendente
+        até a vela fechar, e aí resolve_signal grava o da corretora. `units`: ganho em entradas (None = payout do sinal)."""
+        sql = (
+            "UPDATE signals SET"
+            " details = json_set(coalesce(details, '{}'), '$.corretora', json_object("
+            "  'ordem', :order_id, 'resultado', :result, 'lucro', coalesce(:units, payout),"
+            "  'velas', coalesce(json_extract(details, '$.corretora.velas'),"
+            "                    CASE WHEN result = 'pendente' THEN NULL ELSE result END))),"
+            " result = CASE WHEN result = 'pendente' THEN result ELSE :result END,"
+            " profit = CASE WHEN result = 'pendente' THEN profit ELSE coalesce(:units, payout) END"
+            " WHERE id = :id"
+        )
+        with self.Session.begin() as s:
+            res = s.execute(text(sql), {"id": signal_id, "order_id": order_id, "result": result, "units": units})
+            if not res.rowcount:
+                return None
+            row = s.get(SignalRow, signal_id)
+            return row.to_dict() if row else None
+
+    def sync_order_results(self) -> int:
+        """Ao subir o servidor: sinais cuja ordem fechou na corretora mas ainda sem o resultado dela
+        (gravados antes desta regra). Devolve quantos foram acertados."""
+        with self.Session() as s:
+            q = (
+                select(OrderRow.signal_id, OrderRow.id, OrderRow.status, OrderRow.profit, OrderRow.amount)
+                .join(SignalRow, SignalRow.id == OrderRow.signal_id)
+                .where(OrderRow.status.in_((WIN, LOSS, DRAW)), func.json_extract(SignalRow.details, "$.corretora").is_(None))
+                .order_by(OrderRow.id)
+            )
+            todo = list(s.execute(q))
+        for signal_id, order_id, status, profit, amount in todo:
+            self.apply_order_result(signal_id, order_id, status, order_units(status, profit, amount))
+        return len(todo)
 
     def all_pending(self) -> list[dict]:
         with self.Session() as s:
@@ -240,6 +303,17 @@ class Database:
                 setattr(row, k, v)
             s.flush()
             return row.to_dict()
+
+    def signal_info(self, ids: Iterable[int]) -> dict[int, dict]:
+        """Payout e setup dos sinais que geraram ordens (para o desempenho das ordens)."""
+        wanted = sorted({i for i in ids if i is not None})
+        out: dict[int, dict] = {}
+        with self.Session() as s:
+            for start in range(0, len(wanted), 500):  # o SQLite limita quantos valores cabem num IN
+                q = select(SignalRow.id, SignalRow.payout, SignalRow.setup).where(SignalRow.id.in_(wanted[start:start + 500]))
+                for sid, payout, setup in s.execute(q):
+                    out[sid] = {"payout": payout, "setup": setup}
+        return out
 
     def list_orders(self, *, limit: int = 200, since_ts: int | None = None, asset: str | None = None) -> list[dict]:
         with self.Session() as s:

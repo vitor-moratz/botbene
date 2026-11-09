@@ -10,12 +10,14 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from app.analytics.orders import MANUAL, order_rows, status_counts
 from app.analytics.stats import breakeven, summarize, total
 from app.analytics.timeline import BRT, GRANULARITY, cumulative, period_start, timeline
 from app.analytics.validation import summarize_validation
 from app.broker.base import BrokerError
 from app.market.candle import is_otc, normalize_asset, valid_asset
 from app.service.bot import BotBusyError, BotService
+from app.service.config_store import MAX_ASSETS
 from app.service.orders import DuplicateOrderError
 from app.strategies import STRATEGY_LABELS, STRATEGY_ORDER
 
@@ -40,7 +42,7 @@ class StartBody(BaseModel):
     """Sem nada: usa os ativos e a vela da Configuração."""
 
     asset: str | None = None
-    assets: list[str] | None = Field(None, max_length=8)
+    assets: list[str] | None = Field(None, max_length=MAX_ASSETS)
     timeframe: Literal[60, 120, 300] | None = None
 
     @field_validator("asset")
@@ -63,6 +65,7 @@ class ManualOrderBody(BaseModel):
     direction: Literal["call", "put"]
     amount: float = Field(gt=0, le=1_000_000)
     minutes: int = Field(ge=1, le=5)
+    kind: Literal["binary", "digital"] = "binary"
 
     @field_validator("asset")
     @classmethod
@@ -83,11 +86,15 @@ class ConfigPatch(BaseModel):
     max_consecutive_losses: int | None = None
     martingale: bool | None = None
     gale_levels: int | None = None
+    gale_strategies: list[str] | None = None
+    max_lost_cycles: int | None = None
     min_payout: float | None = None
     hours_start: str | None = None
     hours_end: str | None = None
     assets: list[str] | None = None
     timeframe: Literal[60, 120, 300] | None = None
+    auto_market: bool | None = None
+    option_type: Literal["binary", "digital", "best"] | None = None
 
 
 def _strategies(strategy: str | None) -> str | list[str] | None:
@@ -135,7 +142,7 @@ def pairs(request: Request) -> dict:
 @router.post("/orders/manual")
 def manual_order(body: ManualOrderBody, request: Request) -> dict:
     try:
-        return _bot(request).manual_order(body.asset, body.direction, body.amount, body.minutes)
+        return _bot(request).manual_order(body.asset, body.direction, body.amount, body.minutes, body.kind)
     except (BotBusyError, DuplicateOrderError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
@@ -340,4 +347,55 @@ def stats(
         "timeline": timeline(rows, period),
         "cumulative": cumulative(rows),
         "assets": request.app.state.db.assets(),
+    }
+
+
+@router.get("/stats/orders")
+def order_stats(
+    request: Request,
+    period: Period = "mes",
+    account: Literal["PRACTICE", "REAL"] | None = None,
+    asset: str | None = None,
+    strategy: str | None = None,
+) -> dict:
+    """Tela Desempenho: só ordens enviadas à corretora, em dinheiro. `account` separa demo de real (não se somam)."""
+    db = request.app.state.db
+    since = period_start(period)
+    every = db.list_orders(limit=100_000)
+    orders = [o for o in every if (since is None or o["requested_at"] >= since) and (account is None or o["account"] == account)]
+    if asset:
+        orders = [o for o in orders if o["asset"] == asset]
+    names = _strategies(strategy)
+    if names:
+        wanted = {names} if isinstance(names, str) else set(names)
+        orders = [o for o in orders if o["strategy"] in wanted]
+    signals = db.signal_info(o["signal_id"] for o in orders)
+    rows = order_rows(orders, signals, request.app.state.bot.settings.default_payout)
+    overall = total(rows)
+    order = {name: i for i, name in enumerate(STRATEGY_ORDER)}
+
+    def label(name: str) -> str:
+        return STRATEGY_LABELS.get(name) or ("Entrada manual" if name == MANUAL else name)
+
+    by_strategy = sorted(summarize(rows, lambda r: r["strategy"]), key=lambda g: order.get(g.key, 99))
+    mine = [o for o in every if account is None or o["account"] == account]  # o que dá para filtrar, em qualquer período
+    return {
+        "period": period,
+        "since_ts": since,
+        "account": account,
+        "granularity": GRANULARITY[period],
+        "total": overall.to_dict(),
+        "breakeven": overall.breakeven if overall.breakeven is not None else breakeven(0.85),
+        "staked": round(sum(r["amount"] for r in rows), 2),
+        "by_strategy": [g.to_dict() | {"label": label(g.key)} for g in by_strategy],
+        "by_setup": [g.to_dict() for g in sorted(summarize(rows, lambda r: f"{r['strategy']}|{r['setup']}"), key=lambda g: (-g.n, g.key))],
+        "by_hour": [g.to_dict() for g in sorted(summarize(rows, lambda r: _hour_brt(r["entry_ts"])), key=lambda g: g.key)],
+        "by_market": [g.to_dict() for g in summarize(rows, lambda r: "OTC" if r["is_otc"] else "Mercado normal")],
+        "by_type": [g.to_dict() for g in sorted(summarize(rows, lambda r: "Digital" if r["option_type"] == "digital" else "Binária"),
+                                                key=lambda g: g.key)],
+        "timeline": timeline(rows, period),
+        "cumulative": cumulative(rows),
+        **status_counts(orders),
+        "assets": sorted({o["asset"] for o in mine}),
+        "strategies": [{"name": n, "label": label(n)} for n in sorted({o["strategy"] for o in mine}, key=lambda n: order.get(n, 99))],
     }
