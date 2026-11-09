@@ -201,6 +201,29 @@ def get_config(request: Request) -> dict:
     return request.app.state.config.public()
 
 
+# Nome de cada campo como aparece na tela, para o erro dizer qual campo passou do limite (em português).
+CONFIG_LABELS = {
+    "stake": "Valor de cada entrada", "stop_win": "Stop win", "stop_loss": "Stop loss",
+    "max_trades": "Máximo de entradas por sessão", "max_consecutive_losses": "Pausar depois de X perdas seguidas",
+    "gale_levels": "Máximo de gales por ciclo", "max_lost_cycles": "Stop de ciclo", "min_payout": "Payout mínimo",
+}
+
+
+def _config_error(e: dict) -> str:
+    field = e["loc"][0] if e.get("loc") else None
+    label = CONFIG_LABELS.get(field)
+    ctx = e.get("ctx") or {}
+    if label and e["type"] in ("less_than_equal", "greater_than_equal"):
+        limit = ctx.get("le", ctx.get("ge"))
+        if field == "min_payout":
+            shown = f"{limit * 100:g}%"
+        else:
+            shown = f"{limit:,.0f}".replace(",", ".") if float(limit).is_integer() else f"{limit:g}".replace(".", ",")
+        return f"{label}: {'no máximo' if e['type'] == 'less_than_equal' else 'no mínimo'} {shown}"
+    msg = e["msg"].removeprefix("Value error, ")
+    return f"{label}: {msg}" if label else msg
+
+
 @router.put("/config")
 def put_config(body: ConfigPatch, request: Request) -> dict:
     store = request.app.state.config
@@ -209,7 +232,7 @@ def put_config(body: ConfigPatch, request: Request) -> dict:
     try:
         cfg = store.update(patch)
     except ValidationError as exc:
-        msg = "; ".join(e["msg"].removeprefix("Value error, ") for e in exc.errors())
+        msg = "; ".join(_config_error(e) for e in exc.errors())
         raise HTTPException(status_code=422, detail=msg) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

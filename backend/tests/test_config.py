@@ -137,3 +137,14 @@ def test_instalacao_nova_vem_com_os_pares_op_do_estudo_e_troca_automatica():
     assert cfg.assets == list(DEFAULT_PAIRS) and all(a.endswith("-op") for a in cfg.assets)
     assert cfg.auto_market is True
     assert set(DEFAULT_PAIRS) == set(RESEARCH_ASSETS)  # os mesmos pares da pesquisa (velas guardadas para o estudo)
+
+
+def test_maximo_de_entradas_vai_ate_10000_e_o_erro_diz_o_campo(tmp_path):
+    with make_client(tmp_path) as client:
+        r = client.put("/api/config", json={"max_trades": 10000})
+        assert r.status_code == 200 and r.json()["max_trades"] == 10000
+        r = client.put("/api/config", json={"max_trades": 10001})
+        assert r.status_code == 422 and r.json()["detail"] == "Máximo de entradas por sessão: no máximo 10.000"
+        r = client.put("/api/config", json={"min_payout": 0.4})
+        assert r.status_code == 422 and r.json()["detail"] == "Payout mínimo: no mínimo 50%"
+        assert client.put("/api/config", json={"max_trades": None}).json()["max_trades"] is None  # vazio = sem limite

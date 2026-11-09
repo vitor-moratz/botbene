@@ -52,7 +52,7 @@ class UserConfig(BaseModel):
     stake: float = Field(2.0, ge=1.0, le=10_000)
     stop_win: float | None = Field(20.0, ge=0)
     stop_loss: float | None = Field(20.0, ge=0)
-    max_trades: int | None = Field(30, ge=1, le=1000)
+    max_trades: int | None = Field(30, ge=1, le=10_000)
     max_consecutive_losses: int | None = Field(4, ge=1, le=100)
     martingale: bool = False  # "com análise": o gale só vale para a próxima entrada válida (e aprovada)
     gale_levels: int = Field(1, ge=1, le=MAX_GALE_LEVELS)
