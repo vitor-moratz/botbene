@@ -29,6 +29,8 @@
   --series-11: #c77dd4;
   --series-12: #84b84c;
   --series-13: #e0a3b8;
+  --series-14: #7fd1c7;
+  --series-15: #d6c27a;
   --brand: #06d902;
   --good: #0ca30c;
   --good-text: #0ca30c;
@@ -69,6 +71,8 @@
   --series-11: #9b4fb0;
   --series-12: #5e8a23;
   --series-13: #b0577a;
+  --series-14: #2a8a7e;
+  --series-15: #8a7420;
   --brand: #078a05;
   --good: #0ca30c;
   --good-text: #006300;
@@ -540,6 +544,9 @@ table.data tr.good-row td:first-child::before { content: "★ "; color: var(--go
 /* ---------------------------------------------------------------- o que entra nos números do painel */
 .scope-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: -4px 0 12px; font-size: 13px; color: var(--text-secondary); }
 .scope-row .key { color: var(--text-primary); font-weight: 600; }
+.scope-row .scope-select { height: 28px; padding: 0 8px; font-size: 13px; max-width: 260px; }
+.board tr.picked td { background: var(--surface-2); }
+.board tr.picked td:first-child { box-shadow: inset 3px 0 0 var(--series-1); }
 
 /* ---------------------------------------------------------------- barra de controle */
 .field-label { font-size: 12px; color: var(--text-secondary); }
@@ -832,6 +839,9 @@ table.data tr.good-row td:first-child::before { content: "★ "; color: var(--go
 .cfg-radio input, .cfg-checks input[type="checkbox"] { height: auto; margin-top: 3px; }
 .cfg-checks > label[hidden] { display: none; }
 #cfg-auto-market-row { margin-top: 10px; }
+.market-mode { margin: 4px 0 0 30px; }
+.market-mode[hidden] { display: none; }
+.market-mode input:disabled + span { opacity: 0.55; }
 .gale-strats { margin-top: 10px; }
 .gale-strats[hidden] { display: none; }
 .gale-strats > div { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0; }

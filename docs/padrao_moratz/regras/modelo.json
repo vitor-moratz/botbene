@@ -1,0 +1,13 @@
+{
+  "id": "M-000",
+  "trilha": "op",
+  "texto": "MODELO DO FORMATO (não é uma hipótese nossa): depois de uma vela grande que fecha colada no topo, a próxima desce.",
+  "origem": "olho",
+  "condicoes": [
+    {"traco": "tamanho", "min": 2.0},
+    {"traco": "fecho", "min": 0.9}
+  ],
+  "direcao": "contra_cor",
+  "vencimento": 60,
+  "pares": null
+}

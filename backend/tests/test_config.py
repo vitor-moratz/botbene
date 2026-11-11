@@ -89,7 +89,7 @@ def test_estados_e_scripts_pela_tela(tmp_path):
         body = client.get("/api/config").json()
         assert body["strategies"] == {"retracao_comando": "operate"}
         assert body["strategy_names"] == ["score_ldp", "retracao_comando_v2", "retracao_comando", "ldp_apostila", "retracao_lote",
-                                          "reversao_forca", "reversao_indecisao", "esticao", "deeplob_iq", "bb_rci", "bb_rci_v2"]
+                                          "reversao_forca", "reversao_indecisao", "esticao", "deeplob_iq", "bb_rci", "bb_rci_v2", "virada_tarde", "bb_rci_ny"]
         assert body["chart_scripts"] == {"ldp_lines": True, "ldp_arrows": True, "wiki_pro": False}
         r = client.put("/api/config", json={"strategies": {"retracao_comando": "observe", "ldp_apostila": "off"},
                                             "chart_scripts": {"ldp_arrows": False}})

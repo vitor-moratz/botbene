@@ -307,9 +307,11 @@
           <div class="field"><label for="d-account">Conta</label>
             <select id="d-account"><option value="REAL">Real</option><option value="PRACTICE">Demo</option></select>
           </div>
+          <label class="check" id="d-cycle-row" hidden title="Conta por ciclo as estratégias com gale: % de ciclos ganhos, com o mínimo por ciclo. Os números ficam só com elas."><input type="checkbox" id="d-cycle"> contar por ciclo de gale</label>
         </div>
         <p class="muted small d-intro">Só ordens enviadas à corretora, em dinheiro da conta escolhida (demo e real não se somam). Entradas que a estratégia só avaliou, sem ordem, ficam na tela Entradas.</p>
         <p class="note" id="d-note" hidden></p>
+        <p class="muted small" id="d-cycle-note" hidden></p>
 
         <div class="kpis">
           <div class="kpi kpi-hero">
@@ -317,9 +319,9 @@
             <div class="hero-value" id="d-profit">—</div>
             <div class="kpi-sub" id="d-profit-sub">em dinheiro · só ordens com resultado</div>
           </div>
-          <div class="kpi"><div class="kpi-label">Acerto</div><div class="kpi-value" id="d-wr">—</div><div class="kpi-sub" id="d-wr-sub">—</div></div>
-          <div class="kpi"><div class="kpi-label">Ordens com resultado</div><div class="kpi-value" id="d-n">—</div><div class="wl-bar" id="d-wl" aria-hidden="true"></div><div class="kpi-sub" id="d-n-sub">—</div><div class="kpi-sub" id="d-n-extra"></div></div>
-          <div class="kpi"><div class="kpi-label">Mínimo para empatar</div><div class="kpi-value" id="d-be">—</div><div class="kpi-sub">1 ÷ (1 + payout)</div></div>
+          <div class="kpi"><div class="kpi-label" id="d-wr-label">Acerto</div><div class="kpi-value" id="d-wr">—</div><div class="kpi-sub" id="d-wr-sub">—</div></div>
+          <div class="kpi"><div class="kpi-label" id="d-n-label">Ordens com resultado</div><div class="kpi-value" id="d-n">—</div><div class="wl-bar" id="d-wl" aria-hidden="true"></div><div class="kpi-sub" id="d-n-sub">—</div><div class="kpi-sub" id="d-n-extra"></div></div>
+          <div class="kpi"><div class="kpi-label">Mínimo para empatar</div><div class="kpi-value" id="d-be">—</div><div class="kpi-sub" id="d-be-sub">1 ÷ (1 + payout)</div></div>
         </div>
 
         <div class="grid-2">
@@ -419,7 +421,11 @@
                 <datalist id="cfg-asset-list"></datalist>
                 <button type="button" class="ghost-btn" id="cfg-asset-add">Adicionar</button>
               </div>
-              <label id="cfg-auto-market-row" hidden><input type="checkbox" id="cfg-auto-market"> <span>Trocar sozinho entre OTC e mercado normal<br><span class="muted small">Quando o mercado normal abre, o bot passa do EURUSD-OTC para o EURUSD-op; quando ele fecha, volta para o OTC. Vale na hora, mesmo com o bot rodando. A troca espera o par ficar sem entrada armada e sem pedido aberto, não vai para um mercado que fecha em menos de 30 min e só vai para o normal se o payout dele passar do mínimo.</span></span></label>
+              <label id="cfg-auto-market-row" hidden><input type="checkbox" id="cfg-auto-market"> <span>Trocar sozinho entre OTC e mercado normal<br><span class="muted small">Quando o mercado normal abre, o bot passa do EURUSD-OTC para o EURUSD-op; quando ele fecha, volta para o OTC (escolha abaixo se é par a par ou só quando todos fecharem). Vale na hora, mesmo com o bot rodando; os pares que já trocaram voltam no próximo Iniciar. A troca espera o par ficar sem entrada armada e sem pedido aberto, não vai para um mercado que fecha em menos de 30 min e só vai para o normal se o payout dele passar do mínimo.</span></span></label>
+              <div id="cfg-market-mode-row" class="cfg-radio market-mode" hidden>
+                <label><input type="radio" name="cfg-market-mode" value="normal_primeiro"> <span><strong>Normal primeiro</strong><br><span class="muted small">Enquanto algum par normal estiver aberto, todos ficam no mercado normal (os que estão fechados esperam, sem operar). Só quando todos os normais fecharem é que todos vão para o OTC, e voltam quando algum normal abrir.</span></span></label>
+                <label><input type="radio" name="cfg-market-mode" value="por_par"> <span><strong>Cada par sozinho</strong><br><span class="muted small">Cada par vai para o OTC quando o normal dele fecha e volta quando ele abre. Pode misturar normal e OTC ao mesmo tempo.</span></span></label>
+              </div>
             </fieldset>
             <fieldset class="cfg-radio" id="cfg-option-row" hidden>
               <legend>Tipo de opção</legend>
@@ -444,6 +450,10 @@
               <div class="field"><label for="cfg-max-losses">Pausar depois de X perdas seguidas</label><input id="cfg-max-losses" type="number" min="1" step="1" placeholder="sem pausa"></div>
             </div>
             <p class="muted small">Valores na moeda da conta. O stop loss conta o pior caso: uma ordem nova só sai se, perdendo ela e as que estão abertas, a perda da sessão não passar do limite.</p>
+            <div class="cfg-checks" id="cfg-trail-row" hidden>
+              <label><input type="checkbox" id="cfg-stop-loss-trail"> <span>Stop loss acompanha o lucro<br><span class="muted small">Ligado, o stop loss conta a partir do <strong>melhor resultado da sessão</strong>, e não do Iniciar. Com stop loss de 50: se a sessão chegou a +80, ela para de abrir ordens antes de cair abaixo de +30. Enquanto não tem lucro, vale igual: no máximo 50 de perda desde o Iniciar. O limite só sobe, nunca desce. Vale na hora, mesmo com o bot rodando.</span></span></label>
+              <p class="note small" id="cfg-trail-example"></p>
+            </div>
             <fieldset class="cfg-checks">
               <legend>Filtros de entrada</legend>
               <div class="cfg-grid">

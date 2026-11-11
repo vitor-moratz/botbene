@@ -10,6 +10,8 @@ from app.ldp.engine import EngineStep, LdpEngine
 from app.market.candle import Candle
 from app.strategies.bb_rci import NAME as BB_RCI
 from app.strategies.bb_rci import BollingerRci
+from app.strategies.bb_rci_ny import NAME as BB_RCI_NY
+from app.strategies.bb_rci_ny import BollingerRciNY
 from app.strategies.bb_rci_v2 import NAME as BB_RCI_V2
 from app.strategies.bb_rci_v2 import BollingerRciV2
 from app.strategies.deeplob import NAME as DEEPLOB
@@ -25,11 +27,13 @@ from app.strategies.retracao_comando import NAME_V2 as RETRACAO_V2
 from app.strategies.retracao_comando import RetracaoComando, RetracaoComandoV2
 from app.strategies.score import NAME as SCORE
 from app.strategies.score import ScoreLdp
+from app.strategies.virada_tarde import NAME as VIRADA
+from app.strategies.virada_tarde import ViradaTarde
 
-INTRA_NAMES = (SCORE, RETRACAO_V2, RETRACAO, APOSTILA, *RECIPE_NAMES, ESTICAO, DEEPLOB, BB_RCI, BB_RCI_V2)
+INTRA_NAMES = (SCORE, RETRACAO_V2, RETRACAO, APOSTILA, *RECIPE_NAMES, ESTICAO, DEEPLOB, BB_RCI, BB_RCI_V2, VIRADA, BB_RCI_NY)
 SHORT_LABELS = {SCORE: "Score", RETRACAO_V2: "Retração no comando v2", RETRACAO: "Retração no comando", APOSTILA: "Marcações", RETRACAO_LOTE: "Retração no lote",
                 REVERSAO_FORCA: "Reversão A", REVERSAO_INDECISAO: "Reversão B", ESTICAO: "Esticão rápido", DEEPLOB: "DeepLOB",
-                BB_RCI: "Bollinger + RCI", BB_RCI_V2: "Bollinger + RCI v2"}
+                BB_RCI: "Bollinger + RCI", BB_RCI_V2: "Bollinger + RCI v2", VIRADA: "Virada da Tarde", BB_RCI_NY: "Bollinger NY"}
 # Estratégias que ainda não podem mandar ordem: só Desligada ou Observar.
 OBSERVE_ONLY = (ESTICAO, DEEPLOB, BB_RCI_V2)
 
@@ -38,7 +42,8 @@ def default_intra(timeframe: int = 60) -> list:
     return [ScoreLdp(timeframe=timeframe), RetracaoComandoV2(timeframe=timeframe), RetracaoComando(timeframe=timeframe),
             LdpApostila(timeframe=timeframe),
             *recipes(timeframe), Esticao(timeframe=timeframe), DeepLobIQ(timeframe=timeframe), BollingerRci(timeframe=timeframe),
-            BollingerRciV2(timeframe=timeframe)]
+            BollingerRciV2(timeframe=timeframe), ViradaTarde(timeframe=timeframe),
+            BollingerRciNY(timeframe=timeframe)]
 
 
 def bind_asset(strategies: Sequence, asset: str) -> None:

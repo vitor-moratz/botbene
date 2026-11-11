@@ -276,7 +276,7 @@ O que cada estado quer dizer:
 - **Desempenho:** filtre por "Apostila · retração no comando" e origem "Ao vivo" para ver o acerto com o intervalo de confiança.
 - A gestão de risco bloqueia novas ordens quando:
   - chega no stop win;
-  - mais uma perda poderia passar do stop loss (contando o pior caso das ordens abertas);
+  - mais uma perda poderia passar do stop loss (contando o pior caso das ordens abertas). Com **"Stop loss acompanha o lucro"** ligado (desde 10/11/2026), o limite conta do melhor resultado da sessão, e não do Iniciar: com stop loss de 50, a sessão que chegou a +80 para antes de cair abaixo de +30. Sem lucro ainda, vale igual (−50 desde o Iniciar); o limite só sobe;
   - atinge o limite de entradas;
   - ou encosta em X perdas seguidas.
 - **Martingale com análise.** Fica desligado por padrão e a recomendação é manter assim:
@@ -287,6 +287,7 @@ O que cada estado quer dizer:
   - **stop de ciclo** (opcional): para de abrir entradas depois de X ciclos perdidos inteiros na sessão (perdeu a entrada e todos os gales), somando todas as estratégias;
   - se a próxima entrada do gale cai logo na vela seguinte à perda, o bot **espera o resultado** da ordem anterior (ele chega ~1 s depois da vela abrir) dentro da janela de entrada, e a ordem sai com o valor certo. Se a janela fechar antes, a entrada fica bloqueada, nenhuma ordem sai, e ela aparece no histórico de ordens como bloqueada, com o motivo (desde 09/11/2026; antes ela era sempre bloqueada);
   - ele não melhora o acerto, só concentra a perda. Com US$ 2 e 1 gale, perder o ciclo custa US$ 6,39 e apaga quase 4 vitórias de US$ 1,68.
+  - **contar por ciclo de gale** (caixa no Painel e no Desempenho; na tela Entradas aparece sozinho): a % é de **ciclos ganhos** (ganhou na entrada ou em algum gale) sobre os ciclos com resultado; ciclo ganho = 1 vitória, ciclo perdido = 1 derrota, e quantas ordens ele perdeu aparece no texto ao lado. Como o ciclo perdido custa a entrada e todos os gales, o mínimo é alto: com G2 e payout de 83%, 16,14 ÷ (16,14 + 1,66) = **90,7%** (até 10/11 a conta contava cada ordem perdida, com mínimo de 76,4%). Os números do topo ficam só com as estratégias que usam gale (misturar com quem conta por ordem não tem mínimo único); cada estratégia mostra o mínimo dela, e o resultado em dinheiro do Painel é o de todas. O número que conversa direto com o dinheiro é **"1 ciclo perdido a cada N"**: com G2 e payout de 83%, empata em 1 a cada ~10,7.
 
 ### 6. Quando reavaliar
 

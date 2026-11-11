@@ -1,0 +1,1029 @@
+<title>Mesa de Leitura Moratz</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: uma mesa de leitura. O gráfico ocupa a largura toda; abaixo, o contexto M5/M15, a régua e o palpite.
+   Abas: Às cegas, Mapa da máquina, Caderno, Minhas leituras. */
+:root {
+  --bg: #eef1f5;
+  --surface: #ffffff;
+  --surface-2: #e3e8ef;
+  --fg: #121821;
+  --muted: #566173;
+  --line: #d0d7e1;
+  --accent: #2b45ad;
+  --accent-fg: #ffffff;
+  --up: #12825d;
+  --down: #c43d35;
+  --flat: #8a94a3;
+  --futuro: #e2e7f5;
+  --segue: #2b45ad;
+  --vira: #b46400;
+  --aviso: #8a5300;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --raio: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1219; --surface: #151c26; --surface-2: #1e2734; --fg: #e5eaf1; --muted: #95a2b5; --line: #2a3441;
+    --accent: #97a8ff; --accent-fg: #0d1219; --up: #3cc48f; --down: #f2706a; --flat: #7e8a9b; --futuro: #1b2437;
+    --segue: #97a8ff; --vira: #eaa94a; --aviso: #eaa94a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1219; --surface: #151c26; --surface-2: #1e2734; --fg: #e5eaf1; --muted: #95a2b5; --line: #2a3441;
+  --accent: #97a8ff; --accent-fg: #0d1219; --up: #3cc48f; --down: #f2706a; --flat: #7e8a9b; --futuro: #1b2437;
+  --segue: #97a8ff; --vira: #eaa94a; --aviso: #eaa94a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.5; }
+.pagina {
+  max-width: 1040px; margin: 0 auto; display: grid; gap: 18px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 56px;
+}
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; margin: 0; letter-spacing: 0.01em; }
+h1 { font-size: 2.1rem; line-height: 1.1; }
+h2 { font-size: 1.45rem; line-height: 1.15; }
+h3 { font-size: 1.12rem; }
+p { margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.mono { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+
+/* topo */
+.topo { display: grid; gap: 12px; }
+.sobre { font-family: var(--font-data); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lead { color: var(--muted); max-width: 66ch; }
+details.como { max-width: 70ch; color: var(--muted); }
+details.como summary { cursor: pointer; color: var(--fg); font-weight: 500; }
+details.como ul { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 4px; }
+.abas { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--line); }
+.abas a {
+  padding: 8px 14px; text-decoration: none; color: var(--muted); font-weight: 500; white-space: nowrap;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.abas a[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+.estado { font-size: 0.85rem; color: var(--muted); }
+.estado[data-tipo="aviso"] { color: var(--aviso); }
+
+/* blocos */
+.vista { display: grid; gap: 16px; min-width: 0; }
+.cartao { background: var(--surface); border: 1px solid var(--line); border-radius: var(--raio); padding: 16px; display: grid; gap: 12px; min-width: 0; }
+.barra { display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch; justify-content: space-between; }
+.trilhas { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: var(--surface); align-self: flex-start; }
+.trilhas button { border: 0; background: transparent; padding: 6px 14px; border-radius: 999px; cursor: pointer; color: var(--muted); font-weight: 500; }
+.trilhas button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+
+/* placar do olho */
+.placar { flex: 1 1 320px; max-width: 520px; display: grid; gap: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--raio); padding: 10px 14px; }
+.placar .linha { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+.placar .grande { font-family: var(--font-data); font-size: 1.35rem; font-weight: 500; }
+.placar .peq { font-size: 0.82rem; color: var(--muted); }
+.escala { position: relative; height: 12px; border-radius: 6px; background: var(--surface-2); }
+.escala .faixa { position: absolute; top: 0; bottom: 0; border-radius: 6px; background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.escala .ponto { position: absolute; top: 1px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: var(--accent); }
+.escala .marca { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--muted); }
+.escala .marca.emp { background: var(--vira); }
+.escala-rot { display: flex; justify-content: space-between; font-family: var(--font-data); font-size: 0.72rem; color: var(--muted); }
+
+/* momento */
+.momento { background: var(--surface); border: 1px solid var(--line); border-radius: var(--raio); padding: 16px; display: grid; gap: 14px; min-width: 0; }
+.momento-topo { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: flex-end; justify-content: space-between; }
+.m-quando { color: var(--muted); font-size: 0.9rem; }
+.m-acoes { display: flex; gap: 14px; flex-wrap: wrap; }
+.troca { display: inline-flex; gap: 6px; align-items: center; font-size: 0.9rem; color: var(--muted); cursor: pointer; }
+.grafico { min-width: 0; }
+.grafico svg, .mini svg { display: block; max-width: 100%; }
+.contexto { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.contexto figure { margin: 0; display: grid; gap: 4px; min-width: 0; }
+.contexto figcaption { font-size: 0.78rem; color: var(--muted); font-family: var(--font-data); letter-spacing: 0.04em; }
+.mini { background: var(--surface-2); border-radius: 8px; min-width: 0; }
+.vazio { padding: 24px; color: var(--muted); text-align: center; }
+
+.vela line { stroke-width: 1; }
+.vela.up line, .vela.up rect { stroke: var(--up); fill: var(--up); }
+.vela.down line, .vela.down rect { stroke: var(--down); fill: var(--down); }
+.vela.flat line, .vela.flat rect { stroke: var(--flat); fill: var(--flat); }
+.vela.alvo rect { stroke: var(--fg); stroke-width: 1.6; }
+.g-futuro { fill: var(--futuro); }
+.g-sep { stroke: var(--muted); stroke-dasharray: 3 3; }
+.g-grade { stroke: var(--line); }
+.g-preco, .g-hora { fill: var(--muted); font-family: var(--font-data); font-size: 11px; }
+.g-entrada { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 3; }
+.g-entrada-txt { fill: var(--accent); font-family: var(--font-data); font-size: 11px; font-weight: 500; }
+.g-interroga { fill: var(--muted); font-family: var(--font-display); font-size: 26px; font-weight: 600; }
+
+/* régua */
+.regua { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.regua .cab { grid-column: 1 / -1; font-size: 0.85rem; color: var(--muted); }
+.traco { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; display: grid; gap: 2px; min-width: 0; }
+.traco .n { font-size: 0.75rem; color: var(--muted); }
+.traco .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-size: 0.95rem; }
+
+/* palpite */
+.palpite, .revelado { display: grid; gap: 8px; }
+.palpite label, .revelado label { font-weight: 500; }
+textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--bg); resize: vertical; min-height: 64px; }
+.botoes { display: flex; flex-wrap: wrap; gap: 10px; }
+.botoes button { border-radius: 8px; padding: 10px 18px; cursor: pointer; font-weight: 600; border: 1px solid var(--line); background: var(--surface); }
+.botoes .b-sobe { border-color: var(--up); color: var(--up); }
+.botoes .b-desce { border-color: var(--down); color: var(--down); }
+.botoes .b-sobe:hover { background: color-mix(in srgb, var(--up) 12%, var(--surface)); }
+.botoes .b-desce:hover { background: color-mix(in srgb, var(--down) 12%, var(--surface)); }
+.botoes .b-pri { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.botoes button:disabled { opacity: 0.5; cursor: default; }
+.veredito { font-size: 1.05rem; font-weight: 500; padding: 10px 12px; border-radius: 8px; background: var(--surface-2); }
+.veredito[data-r="ganhou"] { background: color-mix(in srgb, var(--up) 16%, var(--surface)); }
+.veredito[data-r="perdeu"] { background: color-mix(in srgb, var(--down) 16%, var(--surface)); }
+.veredito .info { display: block; font-size: 0.85rem; font-weight: 400; color: var(--muted); margin-top: 2px; }
+.ok-msg { font-size: 0.85rem; color: var(--muted); }
+.rodape-lote { font-size: 0.82rem; color: var(--muted); }
+
+/* mapa */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips button { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 12px; cursor: pointer; font-size: 0.88rem; }
+.chips button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.desc { color: var(--muted); font-size: 0.9rem; }
+.rolagem { overflow-x: auto; min-width: 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-weight: 500; color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+td.num, th.num { text-align: right; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+.bar { display: flex; align-items: center; gap: 8px; min-width: 150px; }
+.bar .trilho { position: relative; flex: 1; height: 10px; background: var(--surface-2); border-radius: 5px; min-width: 70px; }
+.bar .meio { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--muted); }
+.bar .b { position: absolute; top: 0; bottom: 0; border-radius: 5px; }
+.bar .b.segue { background: var(--segue); } .bar .b.vira { background: var(--vira); }
+.bar .b.up { background: var(--up); } .bar .b.down { background: var(--down); }
+.bar .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; min-width: 52px; text-align: right; }
+.sorteio-col { color: var(--muted); }
+.legenda { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 0.82rem; color: var(--muted); }
+.legenda i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.resumo-mapa { display: grid; gap: 6px; }
+.resumo-mapa .grande { font-family: var(--font-data); font-size: 1.05rem; }
+.grade-ctrl { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; }
+.grade-ctrl label { display: inline-flex; gap: 6px; align-items: center; font-size: 0.9rem; }
+select { border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; background: var(--surface); }
+.grades { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.grades figure { margin: 0; display: grid; gap: 6px; min-width: 0; }
+.grades figcaption { font-size: 0.85rem; color: var(--muted); }
+.calor { display: grid; gap: 2px; font-size: 0.72rem; font-family: var(--font-data); }
+.calor .ro { color: var(--muted); padding: 2px 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calor .cel { border-radius: 4px; padding: 4px 2px; text-align: center; color: var(--fg); min-width: 44px; }
+.calor .cel small { display: block; color: var(--muted); font-size: 0.62rem; }
+.calor .cel.fraco { opacity: 0.45; }
+
+/* caderno e leituras */
+.registro { display: grid; gap: 4px; padding-block: 10px; border-bottom: 1px solid var(--line); }
+.registro:last-child { border-bottom: 0; }
+.registro .cab { font-family: var(--font-data); font-size: 0.8rem; color: var(--muted); }
+.registro blockquote { margin: 0; padding-left: 10px; border-left: 3px solid var(--line); }
+.tag { display: inline-block; font-family: var(--font-data); font-size: 0.72rem; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); color: var(--muted); }
+.cab-linha { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+.b-sec { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-weight: 500; }
+form.ideia { display: grid; gap: 8px; }
+form.ideia .linha { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+ul.ideias { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+ul.ideias li { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; display: grid; gap: 2px; }
+td.texto { min-width: 220px; max-width: 360px; }
+.r-ganhou { color: var(--up); font-weight: 500; } .r-perdeu { color: var(--down); font-weight: 500; }
+
+@media (max-width: 620px) {
+  h1 { font-size: 1.7rem; }
+  .contexto, .grades { grid-template-columns: minmax(0, 1fr); }
+  .botoes button { flex: 1 1 auto; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .veredito { animation: surge 0.25s ease-out; }
+  @keyframes surge { from { transform: translateY(4px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+}
+</style>
+
+<div class="pagina">
+  <header class="topo">
+    <p class="sobre">Padrão Moratz · laboratório</p>
+    <h1>Mesa de Leitura</h1>
+    <p class="lead">Velas reais da IQ, às cegas. Você diz o que vê e se a próxima sobe ou desce; a mesa mostra o que aconteceu. Cada leitura fica guardada para virar regra e ser testada.</p>
+    <details class="como">
+      <summary>Como funciona</summary>
+      <ul>
+        <li>Os momentos são sorteados do período de descoberta (09/09 a 18/10/2026), sem escolher os bonitos.</li>
+        <li>Você vê até o fechamento da vela da decisão. A entrada vale a vela seguinte: da abertura ao fechamento, 1 minuto, igual ao bot.</li>
+        <li>"Não operaria" também conta: mostra o quanto você é seletivo.</li>
+        <li>O placar só começa a dizer algo perto de 100 leituras. Com payout 0,83, o empate é 54,6%.</li>
+        <li>-op e OTC nunca se misturam: cada trilha tem o seu placar.</li>
+      </ul>
+    </details>
+    <nav class="abas" aria-label="Seções">
+      <a href="#cegas" id="aba-cegas">Às cegas</a>
+      <a href="#mapa" id="aba-mapa">Mapa da máquina</a>
+      <a href="#caderno" id="aba-caderno">Caderno</a>
+      <a href="#leituras" id="aba-leituras">Minhas leituras</a>
+    </nav>
+    <p class="estado" id="estado-banco">Conectando ao banco de leituras…</p>
+  </header>
+
+  <section class="vista" id="v-cegas">
+    <div class="barra">
+      <div class="trilhas" role="group" aria-label="Trilha">
+        <button type="button" data-trilha="op" aria-pressed="true">-op · mercado normal</button>
+        <button type="button" data-trilha="otc" aria-pressed="false">OTC</button>
+      </div>
+      <div class="placar" id="placar" aria-live="polite"></div>
+    </div>
+    <article class="momento">
+      <div class="momento-topo">
+        <div>
+          <h2 id="m-par">Carregando…</h2>
+          <p class="m-quando" id="m-quando"></p>
+        </div>
+        <div class="m-acoes">
+          <label class="troca"><input type="checkbox" id="ver120"> 120 velas</label>
+          <label class="troca"><input type="checkbox" id="mostrar-regua"> Régua</label>
+        </div>
+      </div>
+      <div class="grafico" id="grafico"></div>
+      <div class="contexto">
+        <figure><figcaption>M5 já fechadas</figcaption><div class="mini" id="g-m5"></div></figure>
+        <figure><figcaption>M15 já fechadas</figcaption><div class="mini" id="g-m15"></div></figure>
+      </div>
+      <div class="regua" id="regua" hidden></div>
+      <div class="palpite" id="palpite">
+        <label for="nota-antes">O que você vê?</label>
+        <textarea id="nota-antes" rows="3" placeholder="Ex.: três velas pequenas depois de uma grande vermelha, encostando no fundo da faixa…"></textarea>
+        <div class="botoes">
+          <button type="button" class="b-sobe" data-palpite="sobe">▲ Sobe</button>
+          <button type="button" class="b-desce" data-palpite="desce">▼ Desce</button>
+          <button type="button" class="b-nao" data-palpite="nao_operaria">Não operaria</button>
+        </div>
+      </div>
+      <div class="revelado" id="revelado" hidden>
+        <p class="veredito" id="veredito"></p>
+        <label for="nota-depois">Depois de ver (opcional)</label>
+        <textarea id="nota-depois" rows="2" placeholder="O que esse resultado te mostrou?"></textarea>
+        <div class="botoes">
+          <button type="button" id="salvar-depois">Guardar nota</button>
+          <button type="button" id="proximo" class="b-pri">Próximo momento →</button>
+        </div>
+        <p class="ok-msg" id="ok-depois" aria-live="polite"></p>
+      </div>
+    </article>
+    <p class="rodape-lote" id="lote-info"></p>
+  </section>
+
+  <section class="vista" id="v-mapa" hidden>
+    <div class="barra">
+      <div class="trilhas" role="group" aria-label="Trilha do mapa">
+        <button type="button" data-mapa-trilha="op" aria-pressed="true">-op · mercado normal</button>
+        <button type="button" data-mapa-trilha="otc" aria-pressed="false">OTC</button>
+      </div>
+    </div>
+    <div class="cartao resumo-mapa" id="mapa-resumo"><p class="desc">Carregando o mapa…</p></div>
+    <div class="cartao">
+      <h3>Um traço por vez</h3>
+      <p class="desc">Para cada faixa do traço na vela da decisão: quantas vezes a vela de entrada seguiu a cor dela (ou virou) e quantas vezes subiu. Ao lado, o mesmo cálculo com os resultados sorteados dentro de cada par e dia, onde não existe padrão.</p>
+      <div class="chips" id="mapa-chips"></div>
+      <p class="desc" id="mapa-desc"></p>
+      <div class="legenda">
+        <span><i style="background:var(--segue)"></i>segue a cor</span>
+        <span><i style="background:var(--vira)"></i>vira</span>
+        <span><i style="background:var(--up)"></i>sobe</span>
+        <span><i style="background:var(--down)"></i>desce</span>
+        <span>barra cheia = 10 pontos longe de 50%</span>
+      </div>
+      <div class="rolagem"><table id="mapa-tabela"></table></div>
+    </div>
+    <div class="cartao">
+      <h3>Dois traços juntos</h3>
+      <div class="grade-ctrl">
+        <label for="gx">Linhas <select id="gx"></select></label>
+        <label for="gy">Colunas <select id="gy"></select></label>
+        <label><input type="radio" name="metrica" value="continua" checked> segue a cor</label>
+        <label><input type="radio" name="metrica" value="alta"> sobe</label>
+      </div>
+      <div class="grades">
+        <figure><figcaption>Velas de verdade</figcaption><div class="rolagem" id="calor-real"></div></figure>
+        <figure><figcaption>Sorteio (sem padrão nenhum)</figcaption><div class="rolagem" id="calor-sorteio"></div></figure>
+      </div>
+      <p class="desc">Células com menos de 300 velas ficam apagadas. Cor forte = 8 pontos ou mais longe de 50%.</p>
+    </div>
+  </section>
+
+  <section class="vista" id="v-caderno" hidden>
+    <div class="cartao" id="caderno"><p class="desc">Carregando o caderno…</p></div>
+  </section>
+
+  <section class="vista" id="v-leituras" hidden>
+    <div class="cartao">
+      <h3>Ideias para testar</h3>
+      <p class="desc">Escreva do seu jeito o comportamento que você acha que se repete. Eu transformo em regra exata e a gente testa.</p>
+      <form class="ideia" id="form-ideia">
+        <label for="ideia-texto" class="desc">Ideia</label>
+        <textarea id="ideia-texto" rows="3" placeholder="Ex.: no -op, perto das 18h, quando a vela fecha colada na máxima, a próxima costuma descer."></textarea>
+        <div class="linha">
+          <label for="ideia-trilha">Trilha <select id="ideia-trilha"><option value="op">-op</option><option value="otc">OTC</option></select></label>
+          <button type="submit" class="b-sec">Guardar ideia</button>
+        </div>
+      </form>
+      <ul class="ideias" id="ideias"></ul>
+    </div>
+    <div class="cartao">
+      <div class="cab-linha">
+        <h3>Leituras</h3>
+        <div class="linha">
+          <label for="filtro-leituras">Trilha <select id="filtro-leituras"><option value="todas">todas</option><option value="op">-op</option><option value="otc">OTC</option></select></label>
+          <button type="button" class="b-sec" id="copiar">Copiar tudo</button>
+        </div>
+      </div>
+      <p class="ok-msg" id="copiar-msg" aria-live="polite"></p>
+      <textarea id="copia-texto" rows="6" readonly hidden></textarea>
+      <div class="rolagem"><table id="tabela-leituras"></table></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const BRT = -3 * 3600;
+  const ANTES = 120;
+  const EMPATE = 1 / 1.83;
+  const NOME = { op: '-op', otc: 'OTC' };
+  const DIAS = ['seg', 'ter', 'qua', 'qui', 'sex', 'sáb', 'dom'];
+  const NA_GRADE = ['tamanho', 'corpo', 'fecho', 'lugar', 'viagem', 'ctx5_mov', 'ctx15_mov', 'fila'];
+  const ROTULO = {
+    tamanho: 'tamanho', corpo: 'corpo', fecho: 'fecho', pavio_cima: 'pavio de cima', pavio_baixo: 'pavio de baixo',
+    cor: 'cor', fila: 'fila', lugar: 'lugar', viagem: 'viagem', salto: 'salto', ctx5_cor: 'M5: cor',
+    ctx5_mov: 'M5: movimento', ctx15_cor: 'M15: cor', ctx15_mov: 'M15: movimento', hora: 'hora', dia: 'dia',
+    vol_rel: 'volume relativo',
+  };
+  const TIPOS = {
+    marco: 'Marco', leitura: 'Leitura do olho', teste_D: 'Teste em D', conferencia_E: 'Conferência em E',
+    congelamento: 'Congelamento', futuro: 'Futuro',
+  };
+  const NS = 'http://www.w3.org/2000/svg';
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => [...document.querySelectorAll(s)];
+
+  const st = {
+    trilha: 'op', momentos: {}, lotes: {}, leituras: new Map(), ideias: [], atual: null, revelado: false,
+    mapa: {}, mapaTrilha: 'op', traco: 'fecho', metrica: 'continua', caderno: null, modo: 'conectando',
+  };
+
+  // ---------- formatos ----------
+  const pct = (x, d = 1) => (x == null || Number.isNaN(x) ? '—' : (x * 100).toFixed(d).replace('.', ',') + '%');
+  const num = (x, d = 2) => (x == null || Number.isNaN(x) ? '—' : Number(x).toFixed(d).replace('.', ','));
+  const comSinal = (x, d = 2) => (x == null ? '—' : (x > 0 ? '+' : x < 0 ? '−' : '') + Math.abs(x).toFixed(d).replace('.', ','));
+  const virgula = (s) => String(s).replace(/(\d)\.(\d)/g, '$1,$2');
+  const hhmm = (ts) => {
+    const s = (((ts + BRT) % 86400) + 86400) % 86400;
+    return String(Math.floor(s / 3600)).padStart(2, '0') + ':' + String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  };
+  function wilson(w, n, z = 1.96) {
+    if (!n) return [0, 1];
+    const p = w / n, d = 1 + (z * z) / n, c = (p + (z * z) / (2 * n)) / d;
+    const h = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
+    return [Math.max(0, c - h), Math.min(1, c + h)];
+  }
+  function novo(tag, cls, texto) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (texto != null) e.textContent = texto;
+    return e;
+  }
+  function svgEl(tag, attrs, pai) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    if (pai) pai.appendChild(e);
+    return e;
+  }
+
+  // ---------- onde as leituras ficam ----------
+  const CHAVE_LOCAL = 'mesa-moratz-v1';
+  function lerLocal() { try { return JSON.parse(localStorage.getItem(CHAVE_LOCAL) || '{}'); } catch { return {}; } }
+  function gravarLocal() {
+    try { localStorage.setItem(CHAVE_LOCAL, JSON.stringify({ leituras: Object.fromEntries(st.leituras), ideias: st.ideias })); } catch { /* sem armazenamento */ }
+  }
+  let db = null;
+  const filas = new Map();
+  function emFila(id, fn) {
+    const p = (filas.get(id) || Promise.resolve()).then(fn, fn);
+    filas.set(id, p.catch(() => {}));
+    return p;
+  }
+  const pronto = (async () => {
+    try { db = window.claude && window.claude.use ? await window.claude.use('db') : null; } catch { db = null; }
+    if (db) {
+      st.modo = 'banco';
+      ouvirBanco();
+    } else {
+      st.modo = 'local';
+      const d = lerLocal();
+      st.leituras = new Map(Object.entries(d.leituras || {}));
+      st.ideias = d.ideias || [];
+      aposLeituras();
+      renderIdeias();
+    }
+    mostrarEstado();
+  })();
+
+  function ouvirBanco() {
+    let chegou = false;
+    const timer = setTimeout(() => {
+      if (!chegou) mostrarEstado('As leituras salvas ainda não chegaram. Pode ler: elas aparecem quando o banco responder.');
+    }, 10000);
+    db.collection('leituras').onSnapshot((snap) => {
+      if (!snap.metadata.fromCache) { chegou = true; clearTimeout(timer); }
+      st.leituras = new Map(snap.docs.map((d) => [d.id, d.data()]));
+      aposLeituras();
+      mostrarEstado();
+    }, (err) => {
+      clearTimeout(timer);
+      mostrarEstado('O banco de leituras parou de responder (' + err.code + '). As próximas leituras ficam só nesta tela; recarregue mais tarde.');
+    });
+    db.collection('ideias').onSnapshot((snap) => {
+      st.ideias = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      renderIdeias();
+    }, () => {});
+  }
+
+  function erroGravar(e) {
+    const code = (e && e.code) || 'erro';
+    mostrarEstado(code === 'quota_exceeded'
+      ? 'O banco da mesa encheu: esta leitura ficou só nesta tela. Me avise para eu abrir espaço.'
+      : 'Não consegui guardar a última leitura (' + code + '). Ela ficou só nesta tela.');
+  }
+  async function gravarLeitura(id, dados) {
+    await pronto;
+    if (db) return emFila(id, () => db.collection('leituras').doc(id).set(dados)).catch(erroGravar);
+    gravarLocal();
+  }
+  async function completarLeitura(id, campos) {
+    await pronto;
+    if (db) return emFila(id, () => db.collection('leituras').doc(id).update(campos)).catch(erroGravar);
+    gravarLocal();
+  }
+
+  function mostrarEstado(msg) {
+    const e = $('#estado-banco');
+    if (msg) { e.textContent = msg; e.dataset.tipo = 'aviso'; return; }
+    if (st.modo === 'banco') {
+      e.textContent = 'Leituras guardadas no banco da mesa: ' + st.leituras.size + ' até agora.';
+      e.dataset.tipo = 'ok';
+    } else if (st.modo === 'local') {
+      e.textContent = 'Sem o banco da mesa nesta tela: as leituras ficam só neste navegador. Em "Minhas leituras", use "Copiar tudo" e cole na conversa.';
+      e.dataset.tipo = 'aviso';
+    }
+  }
+
+  // ---------- momentos ----------
+  async function momentos(t) {
+    if (!st.momentos[t]) {
+      const r = await fetch('momentos_' + t + '.json');
+      if (!r.ok) throw new Error('momentos indisponíveis');
+      const dados = await r.json();
+      st.lotes[t] = dados.lote || 1;
+      st.momentos[t] = dados.momentos;
+    }
+    return st.momentos[t];
+  }
+  const proximoNaoLido = (lista) => lista.find((m) => !st.leituras.has(m.id)) || null;
+  function velasDe(m) {
+    const e = 10 ** m.casas;
+    return m.velas.map((v, i) => ({
+      i, ts: m.ts + (i - (ANTES - 1)) * 60,
+      o: (m.base + v[0]) / e, h: (m.base + v[1]) / e, l: (m.base + v[2]) / e, c: (m.base + v[3]) / e,
+    }));
+  }
+  function tempoMaior(velas, m, minutos) {
+    const tf = minutos * 60, fim = m.ts + 60, grupos = new Map();
+    for (const v of velas.slice(0, ANTES)) {
+      const b = Math.floor(v.ts / tf);
+      if (!grupos.has(b)) grupos.set(b, []);
+      grupos.get(b).push(v);
+    }
+    const out = [];
+    for (const [b, vs] of [...grupos.entries()].sort((a, z) => a[0] - z[0])) {
+      if (vs.length !== minutos || (b + 1) * tf > fim) continue;
+      out.push({ i: -1, ts: b * tf, o: vs[0].o, c: vs[vs.length - 1].c,
+        h: Math.max(...vs.map((v) => v.h)), l: Math.min(...vs.map((v) => v.l)) });
+    }
+    return out;
+  }
+
+  async function abrirTrilha(t) {
+    st.trilha = t;
+    $$('[data-trilha]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.trilha === t)));
+    renderPlacar();
+    const lista = await momentos(t);
+    if (st.trilha === t) mostrar(proximoNaoLido(lista));
+  }
+
+  function mostrar(m) {
+    st.atual = m;
+    st.revelado = false;
+    $('#nota-antes').value = '';
+    $('#nota-depois').value = '';
+    $('#ok-depois').textContent = '';
+    $('#revelado').hidden = true;
+    $('#palpite').hidden = !m;
+    $$('[data-palpite]').forEach((b) => { b.disabled = false; });
+    atualizarLote();
+    if (!m) {
+      $('#m-par').textContent = 'Lote lido inteiro';
+      $('#m-quando').textContent = 'Você leu todos os momentos deste lote em ' + NOME[st.trilha] + '. Me avise para eu sortear o próximo.';
+      $('#grafico').replaceChildren(novo('p', 'vazio', 'Sem momentos novos nesta trilha.'));
+      $('#g-m5').replaceChildren();
+      $('#g-m15').replaceChildren();
+      $('#regua').hidden = true;
+      return;
+    }
+    const dia = DIAS[m.regua.dia] || '';
+    $('#m-par').textContent = m.par;
+    $('#m-quando').textContent = 'Decisão às ' + hhmm(m.ts + 60) + ' de ' + dia + ', ' + m.decisao.slice(0, 10)
+      + ' (Brasília). A entrada vale a vela das ' + hhmm(m.ts + 60) + ', que vence às ' + hhmm(m.ts + 120) + '.';
+    desenhar();
+    renderRegua();
+  }
+
+  function desenhar() {
+    const m = st.atual;
+    if (!m) return;
+    const todas = velasDe(m);
+    const ini = $('#ver120').checked ? 0 : ANTES - 60;
+    const passado = todas.slice(ini, ANTES);
+    const futuro = todas.slice(ANTES);
+    const vis = st.revelado ? passado.concat(futuro) : passado.concat(futuro.map(() => null));
+    grafico($('#grafico'), vis, {
+      casas: m.casas, escala: st.revelado ? vis : passado, separador: passado.length,
+      entrada: st.revelado ? todas[ANTES].o : null,
+    });
+    const m5 = tempoMaior(todas, m, 5).slice(-12);
+    const m15 = tempoMaior(todas, m, 15).slice(-8);
+    grafico($('#g-m5'), m5, { casas: m.casas, mini: true });
+    grafico($('#g-m15'), m15, { casas: m.casas, mini: true });
+  }
+
+  function grafico(caixa, velas, o) {
+    const W = Math.max(260, Math.round(caixa.clientWidth || 640));
+    const H = o.mini ? 92 : W < 560 ? 250 : 340;
+    const padL = 6, padR = o.mini ? 6 : 62, padT = 12, padB = o.mini ? 8 : 24;
+    const reais = (o.escala || velas).filter(Boolean);
+    if (!reais.length) { caixa.replaceChildren(novo('p', 'vazio', 'sem velas completas')); return; }
+    let lo = Math.min(...reais.map((v) => v.l)), hi = Math.max(...reais.map((v) => v.h));
+    if (o.entrada != null) { lo = Math.min(lo, o.entrada); hi = Math.max(hi, o.entrada); }
+    const folga = (hi - lo) * 0.06 || 10 ** -o.casas;
+    lo -= folga; hi += folga;
+    const n = velas.length, larg = (W - padL - padR) / n, corpo = Math.max(1, Math.min(14, larg * 0.64));
+    const x = (i) => padL + larg * (i + 0.5);
+    const y = (p) => padT + ((hi - p) / (hi - lo)) * (H - padT - padB);
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: 'img',
+      'aria-label': o.mini ? 'velas maiores já fechadas' : 'velas de 1 minuto até a decisão' });
+    if (!o.mini) {
+      for (let t = 0; t <= 4; t++) {
+        const p = lo + ((hi - lo) * t) / 4;
+        svgEl('line', { x1: padL, x2: W - padR, y1: y(p), y2: y(p), class: 'g-grade' }, svg);
+        svgEl('text', { x: W - padR + 6, y: y(p) + 4, class: 'g-preco' }, svg).textContent = p.toFixed(o.casas);
+      }
+    }
+    if (o.separador != null && o.separador < n) {
+      const x0 = padL + larg * o.separador;
+      svgEl('rect', { x: x0, y: padT - 6, width: larg * (n - o.separador), height: H - padT - padB + 10, class: 'g-futuro' }, svg);
+      svgEl('line', { x1: x0, x2: x0, y1: padT - 6, y2: H - padB + 4, class: 'g-sep' }, svg);
+      if (!st.revelado) {
+        svgEl('text', { x: x0 + (larg * (n - o.separador)) / 2, y: (H - padB + padT) / 2 + 9, 'text-anchor': 'middle', class: 'g-interroga' }, svg).textContent = '?';
+      }
+    }
+    if (!o.mini) {
+      velas.forEach((v, i) => {
+        if (v && ((v.ts + BRT) % 900 === 0)) {
+          svgEl('text', { x: x(i), y: H - 6, 'text-anchor': 'middle', class: 'g-hora' }, svg).textContent = hhmm(v.ts);
+        }
+      });
+    }
+    if (o.entrada != null) {
+      const x0 = padL + larg * o.separador;
+      svgEl('line', { x1: x0, x2: W - padR, y1: y(o.entrada), y2: y(o.entrada), class: 'g-entrada' }, svg);
+      svgEl('text', { x: W - padR + 6, y: y(o.entrada) - 6, class: 'g-entrada-txt' }, svg).textContent = 'entrada';
+    }
+    velas.forEach((v, i) => {
+      if (!v) return;
+      const cor = v.c > v.o ? 'up' : v.c < v.o ? 'down' : 'flat';
+      const g = svgEl('g', { class: 'vela ' + cor + (v.i === ANTES ? ' alvo' : '') }, svg);
+      svgEl('line', { x1: x(i), x2: x(i), y1: y(v.h), y2: y(v.l) }, g);
+      const topo = y(Math.max(v.o, v.c)), base = y(Math.min(v.o, v.c));
+      svgEl('rect', { x: x(i) - corpo / 2, y: topo, width: corpo, height: Math.max(1, base - topo) }, g);
+    });
+    caixa.replaceChildren(svg);
+  }
+
+  // ---------- régua ----------
+  function valorRegua(nome, v) {
+    if (v == null) return '—';
+    switch (nome) {
+      case 'tamanho': case 'vol_rel': return num(v, 2) + '×';
+      case 'corpo': case 'fecho': case 'pavio_cima': case 'pavio_baixo': case 'lugar': return pct(v, 0);
+      case 'cor': case 'ctx5_cor': case 'ctx15_cor': return v > 0 ? 'verde' : v < 0 ? 'vermelha' : 'parada';
+      case 'fila': return v > 0 ? '+' + v + ' (verdes seguidas)' : v < 0 ? '−' + Math.abs(v) + ' (vermelhas seguidas)' : '0';
+      case 'viagem': case 'salto': case 'ctx5_mov': case 'ctx15_mov': return comSinal(v, 2) + ' u';
+      case 'hora': return String(v).padStart(2, '0') + 'h';
+      case 'dia': return DIAS[v] || '—';
+      default: return num(v, 2);
+    }
+  }
+  function renderRegua() {
+    const caixa = $('#regua');
+    caixa.hidden = !$('#mostrar-regua').checked || !st.atual;
+    if (caixa.hidden) return;
+    const m = st.atual, dic = (st.caderno && st.caderno.dicionario) || {};
+    const filhos = [novo('p', 'cab', 'Régua da vela da decisão. Unidade (amplitude mediana das 20 anteriores): ' + num(m.unidade, 1) + ' pontos; "u" = unidades.')];
+    for (const [nome, v] of Object.entries(m.regua)) {
+      const d = novo('div', 'traco');
+      d.title = (dic[nome] || []).join(' · ');
+      d.append(novo('span', 'n', ROTULO[nome] || nome), novo('span', 'v', valorRegua(nome, v)));
+      filhos.push(d);
+    }
+    caixa.replaceChildren(...filhos);
+  }
+
+  // ---------- palpite ----------
+  async function palpitar(p) {
+    const m = st.atual;
+    if (!m || st.revelado) return;
+    st.revelado = true;
+    $$('[data-palpite]').forEach((b) => { b.disabled = true; });
+    const acertou = p === 'nao_operaria' || m.sobe === 0 ? null : (p === 'sobe') === (m.sobe === 1);
+    const dados = {
+      trilha: st.trilha, momento: m.id, par: m.par, ts: m.ts, decisao: m.decisao, palpite: p,
+      nota: $('#nota-antes').value.trim(), sobe: m.sobe, sobe5: m.sobe5, acertou,
+      regua_aberta: $('#mostrar-regua').checked, lote: st.lotes[st.trilha] || 1, quando: new Date().toISOString(),
+    };
+    st.leituras.set(m.id, dados);
+    $('#palpite').hidden = true;
+    $('#revelado').hidden = false;
+    mostrarVeredito(dados);
+    desenhar();
+    renderPlacar();
+    atualizarLote();
+    renderTabela();
+    mostrarEstado();
+    await gravarLeitura(m.id, dados);
+  }
+  function mostrarVeredito(d) {
+    const v = $('#veredito');
+    const moveu = d.sobe > 0 ? 'subiu' : d.sobe < 0 ? 'desceu' : 'fechou no mesmo preço da abertura';
+    let txt, r;
+    if (d.palpite === 'nao_operaria') { txt = 'Você ficou de fora. A vela de entrada ' + moveu + '.'; r = 'fora'; }
+    else if (d.sobe === 0) { txt = 'Empate: a vela de entrada fechou no mesmo preço da abertura (a IQ devolve a entrada).'; r = 'empate'; }
+    else if (d.acertou) { txt = 'Acertou: a vela de entrada ' + moveu + '.'; r = 'ganhou'; }
+    else { txt = 'Errou: a vela de entrada ' + moveu + '.'; r = 'perdeu'; }
+    v.dataset.r = r;
+    v.replaceChildren(document.createTextNode(txt));
+    if (d.sobe5 != null) {
+      v.append(novo('span', 'info', 'Em 5 minutos o preço ' + (d.sobe5 > 0 ? 'subiu' : d.sobe5 < 0 ? 'desceu' : 'voltou ao mesmo lugar') + ' (só informação; o placar é de 1 minuto).'));
+    }
+  }
+
+  function contas(t) {
+    let n = 0, w = 0, nao = 0, emp = 0, total = 0;
+    for (const l of st.leituras.values()) {
+      if (l.trilha !== t) continue;
+      total++;
+      if (l.palpite === 'nao_operaria') nao++;
+      else if (l.sobe === 0) emp++;
+      else { n++; if (l.acertou) w++; }
+    }
+    return { n, w, nao, emp, total };
+  }
+  function renderPlacar() {
+    const c = contas(st.trilha), [lo, hi] = wilson(c.w, c.n);
+    const pos = (v) => Math.max(0, Math.min(100, ((v - 0.3) / 0.5) * 100));
+    const caixa = $('#placar');
+    const l1 = novo('div', 'linha');
+    l1.append(novo('span', 'peq', 'Seu olho no ' + NOME[st.trilha]),
+      novo('span', 'grande', c.n ? c.w + ' de ' + c.n + ' · ' + pct(c.w / c.n) : 'sem leituras ainda'));
+    if (c.n) l1.append(novo('span', 'peq mono', 'IC95 ' + pct(lo, 0) + ' a ' + pct(hi, 0)));
+    const esc = novo('div', 'escala');
+    esc.setAttribute('aria-hidden', 'true');
+    const m50 = novo('span', 'marca'); m50.style.left = pos(0.5) + '%';
+    const mEmp = novo('span', 'marca emp'); mEmp.style.left = pos(EMPATE) + '%';
+    esc.append(m50, mEmp);
+    if (c.n) {
+      const f = novo('span', 'faixa'); f.style.left = pos(lo) + '%'; f.style.width = (pos(hi) - pos(lo)) + '%';
+      const p = novo('span', 'ponto'); p.style.left = pos(c.w / c.n) + '%';
+      esc.append(f, p);
+    }
+    const rot = novo('div', 'escala-rot');
+    rot.append(novo('span', null, '30%'), novo('span', null, '50% · empate 54,6%'), novo('span', null, '80%'));
+    let leitura;
+    if (c.n < 100) leitura = 'Faltam ' + (100 - c.n) + ' leituras com sobe/desce para o placar começar a dizer algo.';
+    else if (lo > EMPATE) leitura = 'O pior caso da faixa já passa do empate: vale olhar com calma o que você está vendo.';
+    else if (hi < 0.5) leitura = 'Abaixo de 50%: o olho está sendo enganado.';
+    else leitura = 'Ainda dentro do acaso.';
+    const l3 = novo('p', 'peq', leitura + ' Não operaria: ' + c.nao + ' · empates: ' + c.emp + '.');
+    caixa.replaceChildren(l1, esc, rot, l3);
+  }
+  function atualizarLote() {
+    const lista = st.momentos[st.trilha];
+    if (!lista) return;
+    const lidos = lista.filter((m) => st.leituras.has(m.id)).length;
+    $('#lote-info').textContent = (st.atual ? 'Momento ' + st.atual.id + ' · ' : '') + 'lote ' + (st.lotes[st.trilha] || 1) + ' · ' + lista.length
+      + ' momentos sorteados do período de descoberta (09/09 a 18/10) · lidos: ' + lidos;
+  }
+  function aposLeituras() {
+    renderPlacar();
+    atualizarLote();
+    renderTabela();
+    const lista = st.momentos[st.trilha];
+    if (!lista) return;
+    if (st.atual && !st.revelado && st.leituras.has(st.atual.id)) mostrar(proximoNaoLido(lista));
+  }
+
+  // ---------- mapa ----------
+  async function abrirMapa(t) {
+    st.mapaTrilha = t;
+    $$('[data-mapa-trilha]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mapaTrilha === t)));
+    if (!st.mapa[t]) {
+      $('#mapa-resumo').replaceChildren(novo('p', 'desc', 'Carregando o mapa…'));
+      try {
+        const r = await fetch('mapa_' + t + '.json');
+        st.mapa[t] = await r.json();
+      } catch {
+        $('#mapa-resumo').replaceChildren(novo('p', 'desc', 'Não consegui abrir o mapa. Recarregue a página.'));
+        return;
+      }
+      preencherSelects(st.mapa[t]);
+    }
+    if (st.mapaTrilha === t) renderMapa();
+  }
+  function preencherSelects(m) {
+    const nomes = NA_GRADE.filter((n) => m.real.simples[n]);
+    for (const [id, padrao] of [['#gx', 'tamanho'], ['#gy', 'fecho']]) {
+      const s = $(id), atual = s.value || padrao;
+      s.replaceChildren(...nomes.map((n) => { const o = novo('option', null, ROTULO[n] || n); o.value = n; return o; }));
+      s.value = nomes.includes(atual) ? atual : nomes[0];
+    }
+  }
+  function barra(v, tipo) {
+    const d = v == null ? 0 : v - 0.5, w = Math.min(1, Math.abs(d) / 0.1) * 50;
+    const cls = tipo === 'continua' ? (d >= 0 ? 'segue' : 'vira') : (d >= 0 ? 'up' : 'down');
+    const caixa = novo('div', 'bar'), tr = novo('span', 'trilho'), b = novo('span', 'b ' + cls);
+    b.style.left = (d >= 0 ? 50 : 50 - w) + '%';
+    b.style.width = w + '%';
+    tr.append(novo('span', 'meio'), b);
+    caixa.append(tr, novo('span', 'v', pct(v)));
+    return caixa;
+  }
+  function renderMapa() {
+    const m = st.mapa[st.mapaTrilha];
+    if (!m) return;
+    const r = m.resumo;
+    const resumo = [
+      novo('h3', null, 'Trilha ' + NOME[st.mapaTrilha] + ' · período de descoberta'),
+      novo('p', 'grande', m.velas.toLocaleString('pt-BR') + ' velas de ' + m.pares.length + ' pares · sobe ' + pct(m.base_alta) + ' · segue a cor ' + pct(m.base_continua)),
+      novo('p', 'desc', 'Células a 5 pontos ou mais de 50% (com 300+ velas): ' + r.real.alta + ' em "sobe" e ' + r.real.continua
+        + ' em "segue a cor", de ' + r.real.celulas + '. No sorteio, em média ' + num(r.sorteio_media.alta, 1) + ' e '
+        + num(r.sorteio_media.continua, 1) + ' (no máximo ' + r.sorteio_max.alta + ' e ' + r.sorteio_max.continua + ' em ' + r.sorteios + ' sorteios).'),
+      novo('p', 'desc', 'Gerado em ' + m.gerado_em + '. É a leitura da máquina, sem regra nenhuma: serve de pista, não de sinal.'),
+    ];
+    $('#mapa-resumo').replaceChildren(...resumo);
+    const nomes = Object.keys(m.real.simples);
+    if (!nomes.includes(st.traco)) st.traco = nomes[0];
+    $('#mapa-chips').replaceChildren(...nomes.map((n) => {
+      const b = novo('button', null, ROTULO[n] || n);
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String(n === st.traco));
+      b.addEventListener('click', () => { st.traco = n; renderMapa(); });
+      return b;
+    }));
+    const dic = m.dicionario[st.traco] || [];
+    $('#mapa-desc').textContent = (ROTULO[st.traco] || st.traco) + ': ' + dic.join(' · ');
+    const t = m.real.simples[st.traco], s = m.sorteio.simples[st.traco];
+    const cab = novo('tr');
+    for (const [txt, num_] of [['Faixa', false], ['Velas', true], ['Segue a cor', false], ['Sorteio', false], ['Sobe', false], ['Sorteio', false], ['Pares onde segue', true]]) {
+      const th = novo('th', num_ ? 'num' : null, txt);
+      cab.append(th);
+    }
+    const linhas = t.rotulos.map((rot, i) => {
+      const c = t.celulas[i], z = s.celulas[i], tr = novo('tr');
+      const tdS = novo('td', 'sorteio-col'), tdS2 = novo('td', 'sorteio-col');
+      tdS.append(barra(z.continua, 'continua'));
+      tdS2.append(barra(z.alta, 'alta'));
+      const tdC = novo('td'), tdA = novo('td');
+      tdC.append(barra(c.continua, 'continua'));
+      tdA.append(barra(c.alta, 'alta'));
+      tr.append(novo('td', 'mono', virgula(rot)), novo('td', 'num', c.n.toLocaleString('pt-BR')), tdC, tdS, tdA, tdS2,
+        novo('td', 'num', c.pares_c ? c.pares_c[0] + ' de ' + c.pares_c[1] : '—'));
+      return tr;
+    });
+    $('#mapa-tabela').replaceChildren(novo('thead'), novo('tbody'));
+    $('#mapa-tabela thead').append(cab);
+    $('#mapa-tabela tbody').append(...linhas);
+    renderGrades();
+  }
+  function acharGrade(grades, gx, gy) {
+    let g = grades.find((q) => q.x === gx && q.y === gy);
+    if (g) return { nx: g.nx, ny: g.ny, cel: (i, j) => g.celulas[i * g.ny + j] };
+    g = grades.find((q) => q.x === gy && q.y === gx);
+    if (g) return { nx: g.ny, ny: g.nx, cel: (i, j) => g.celulas[j * g.ny + i] };
+    return null;
+  }
+  function calor(caixa, m, lado, gx, gy) {
+    const g = acharGrade(m[lado].grades, gx, gy);
+    if (!g) { caixa.replaceChildren(novo('p', 'desc', 'Escolha dois traços diferentes.')); return; }
+    const rx = m.real.simples[gx].rotulos, ry = m.real.simples[gy].rotulos;
+    const grade = novo('div', 'calor');
+    grade.style.gridTemplateColumns = 'minmax(64px, auto) repeat(' + g.ny + ', minmax(44px, 1fr))';
+    grade.append(novo('span', 'ro', ''));
+    ry.forEach((r) => grade.append(novo('span', 'ro', virgula(r))));
+    for (let i = 0; i < g.nx; i++) {
+      grade.append(novo('span', 'ro', virgula(rx[i])));
+      for (let j = 0; j < g.ny; j++) {
+        const c = g.cel(i, j);
+        const v = st.metrica === 'continua' ? c.continua : c.alta, n = st.metrica === 'continua' ? c.nc : c.n;
+        const cel = novo('span', 'cel' + (n < 300 ? ' fraco' : ''));
+        if (v != null) {
+          const d = v - 0.5, forca = Math.round(Math.min(1, Math.abs(d) / 0.08) * 80);
+          const cor = st.metrica === 'continua' ? (d >= 0 ? 'var(--segue)' : 'var(--vira)') : (d >= 0 ? 'var(--up)' : 'var(--down)');
+          cel.style.background = 'color-mix(in srgb, ' + cor + ' ' + forca + '%, var(--surface-2))';
+        }
+        cel.append(document.createTextNode(pct(v, 1)), novo('small', null, n.toLocaleString('pt-BR')));
+        cel.title = (ROTULO[gx] || gx) + ' ' + virgula(rx[i]) + ' · ' + (ROTULO[gy] || gy) + ' ' + virgula(ry[j]);
+        grade.append(cel);
+      }
+    }
+    caixa.replaceChildren(grade);
+  }
+  function renderGrades() {
+    const m = st.mapa[st.mapaTrilha];
+    if (!m) return;
+    const gx = $('#gx').value, gy = $('#gy').value;
+    calor($('#calor-real'), m, 'real', gx, gy);
+    calor($('#calor-sorteio'), m, 'sorteio', gx, gy);
+  }
+
+  // ---------- caderno ----------
+  function renderCaderno() {
+    const c = st.caderno, caixa = $('#caderno');
+    if (!c) return;
+    const ent = c.entradas || [];
+    const conta = (tipo, t) => ent.filter((e) => e.tipo === tipo && e.trilha === t).length;
+    const filhos = [novo('h3', null, 'Caderno do Padrão Moratz'),
+      novo('p', 'desc', 'Toda tentativa fica registrada, inclusive as que falharam. Testes em D: ' + conta('teste_D', 'op') + ' no -op e '
+        + conta('teste_D', 'otc') + ' no OTC · conferências em E: ' + conta('conferencia_E', 'op') + ' e ' + conta('conferencia_E', 'otc')
+        + ' · versões congeladas: ' + conta('congelamento', 'op') + ' e ' + conta('congelamento', 'otc') + '.')];
+    if (!ent.length) filhos.push(novo('p', 'desc', 'Nenhum registro ainda.'));
+    for (const e of [...ent].reverse()) {
+      const reg = novo('div', 'registro');
+      reg.append(novo('p', 'cab', [e.quando, TIPOS[e.tipo] || e.tipo, e.regra_id, e.trilha ? NOME[e.trilha] : ''].filter(Boolean).join(' · ')));
+      if (e.texto) reg.append(novo('blockquote', null, e.texto));
+      if (e.resultado && e.resultado.n != null) {
+        const r = e.resultado;
+        reg.append(novo('p', null, r.n + ' sinais decididos · acerto ' + pct(r.acerto) + ' (IC95 ' + pct(r.ic[0]) + ' a ' + pct(r.ic[1]) + ') · empate ' + pct(r.empate)));
+      }
+      if (e.porta != null) reg.append(novo('p', null, e.porta ? 'Passou a porta.' : 'Não passou a porta: ' + (e.falhas || []).join('; ') + '.'));
+      if (e.veredito) reg.append(novo('p', null, 'Veredito: ' + e.veredito + '. ' + (e.detalhe || '')));
+      if (e.nota) reg.append(novo('p', 'desc', e.nota));
+      filhos.push(reg);
+    }
+    filhos.push(novo('p', 'desc', 'Atualizado em ' + c.gerado_em + '. O caderno completo fica em docs/padrao_moratz/caderno.md, no projeto.'));
+    caixa.replaceChildren(...filhos);
+  }
+
+  // ---------- minhas leituras ----------
+  function textoResultado(l) {
+    if (l.palpite === 'nao_operaria') return 'de fora (' + (l.sobe > 0 ? 'subiu' : l.sobe < 0 ? 'desceu' : 'empate') + ')';
+    if (l.sobe === 0) return 'empate';
+    return l.acertou ? 'acertou' : 'errou';
+  }
+  const PALPITE = { sobe: 'sobe', desce: 'desce', nao_operaria: 'não operaria' };
+  function leiturasOrdenadas() {
+    const f = $('#filtro-leituras').value;
+    return [...st.leituras.values()].filter((l) => f === 'todas' || l.trilha === f)
+      .sort((a, b) => String(b.quando).localeCompare(String(a.quando)));
+  }
+  function renderTabela() {
+    const ls = leiturasOrdenadas();
+    const tab = $('#tabela-leituras');
+    if (!ls.length) { tab.replaceChildren(novo('caption', 'desc', 'Nenhuma leitura ainda. Elas aparecem aqui assim que você der o primeiro palpite.')); return; }
+    const cab = novo('tr');
+    ['Momento', 'Par', 'Decisão', 'Palpite', 'Resultado', 'O que viu', 'Depois'].forEach((t) => cab.append(novo('th', null, t)));
+    const corpo = novo('tbody');
+    for (const l of ls) {
+      const tr = novo('tr');
+      const res = novo('td', l.acertou === true ? 'r-ganhou' : l.acertou === false ? 'r-perdeu' : null, textoResultado(l));
+      tr.append(novo('td', 'mono', l.momento), novo('td', null, l.par), novo('td', 'mono', l.decisao),
+        novo('td', null, PALPITE[l.palpite] || l.palpite), res, novo('td', 'texto', l.nota || ''), novo('td', 'texto', l.nota_depois || ''));
+      corpo.append(tr);
+    }
+    const thead = novo('thead');
+    thead.append(cab);
+    tab.replaceChildren(thead, corpo);
+  }
+  function renderIdeias() {
+    const ul = $('#ideias');
+    const lista = [...st.ideias].sort((a, b) => String(b.quando).localeCompare(String(a.quando)));
+    ul.replaceChildren(...lista.map((i) => {
+      const li = novo('li');
+      const quando = i.quando ? new Date(i.quando).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '';
+      li.append(novo('span', 'tag', NOME[i.trilha] + ' · ' + quando), novo('span', null, i.texto));
+      return li;
+    }));
+  }
+  function textoParaCopiar() {
+    const linhas = leiturasOrdenadas().map((l) => [l.momento, l.par, l.decisao, 'palpite: ' + (PALPITE[l.palpite] || l.palpite),
+      'resultado: ' + textoResultado(l), 'viu: ' + (l.nota || '—'), 'depois: ' + (l.nota_depois || '—')].join(' | '));
+    const ideias = st.ideias.map((i) => 'ideia (' + NOME[i.trilha] + '): ' + i.texto);
+    return ['Mesa de Leitura Moratz', ...linhas, ...ideias].join('\n');
+  }
+
+  // ---------- eventos ----------
+  $$('[data-trilha]').forEach((b) => b.addEventListener('click', () => abrirTrilha(b.dataset.trilha).catch(() => {
+    $('#grafico').replaceChildren(novo('p', 'vazio', 'Não consegui abrir os momentos. Recarregue a página.'));
+  })));
+  $$('[data-palpite]').forEach((b) => b.addEventListener('click', () => palpitar(b.dataset.palpite)));
+  $('#ver120').addEventListener('change', desenhar);
+  $('#mostrar-regua').addEventListener('change', renderRegua);
+  $('#proximo').addEventListener('click', async () => {
+    const lista = await momentos(st.trilha);
+    mostrar(proximoNaoLido(lista));
+    $('.momento').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  $('#salvar-depois').addEventListener('click', async () => {
+    const m = st.atual, txt = $('#nota-depois').value.trim();
+    if (!m || !txt) return;
+    const l = st.leituras.get(m.id);
+    if (l) st.leituras.set(m.id, { ...l, nota_depois: txt });
+    $('#ok-depois').textContent = 'Nota guardada.';
+    renderTabela();
+    await completarLeitura(m.id, { nota_depois: txt });
+  });
+  $$('[data-mapa-trilha]').forEach((b) => b.addEventListener('click', () => abrirMapa(b.dataset.mapaTrilha)));
+  $('#gx').addEventListener('change', renderGrades);
+  $('#gy').addEventListener('change', renderGrades);
+  $$('input[name="metrica"]').forEach((r) => r.addEventListener('change', () => { st.metrica = r.value; renderGrades(); }));
+  $('#filtro-leituras').addEventListener('change', renderTabela);
+  $('#form-ideia').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const texto = $('#ideia-texto').value.trim();
+    if (!texto) return;
+    const dados = { texto, trilha: $('#ideia-trilha').value, quando: new Date().toISOString() };
+    $('#ideia-texto').value = '';
+    await pronto;
+    if (db) {
+      try { await db.collection('ideias').add(dados); } catch (err) { erroGravar(err); }
+    } else {
+      st.ideias.push({ id: 'local-' + Date.now(), ...dados });
+      gravarLocal();
+      renderIdeias();
+    }
+  });
+  $('#copiar').addEventListener('click', () => {
+    const texto = textoParaCopiar(), area = $('#copia-texto');
+    const mostrarArea = () => {
+      area.hidden = false;
+      area.value = texto;
+      area.focus();
+      area.select();
+      $('#copiar-msg').textContent = 'Selecionei o texto abaixo: copie e cole na conversa.';
+    };
+    try {
+      navigator.clipboard.writeText(texto).then(() => { $('#copiar-msg').textContent = 'Copiado. Cole na conversa comigo.'; }, mostrarArea);
+    } catch { mostrarArea(); }
+  });
+
+  // ---------- abas ----------
+  const VISTAS = ['cegas', 'mapa', 'caderno', 'leituras'];
+  function rota() {
+    const h = location.hash.replace('#', '');
+    const v = VISTAS.includes(h) ? h : 'cegas';
+    for (const x of VISTAS) {
+      $('#v-' + x).hidden = x !== v;
+      $('#aba-' + x).setAttribute('aria-selected', String(x === v));
+    }
+    if (v === 'mapa') abrirMapa(st.mapaTrilha);
+    if (v === 'cegas') desenhar();
+    if (v === 'leituras') renderTabela();
+    if (v === 'caderno') renderCaderno();
+  }
+  window.addEventListener('hashchange', rota);
+  let quadro = 0;
+  new ResizeObserver(() => {
+    cancelAnimationFrame(quadro);
+    quadro = requestAnimationFrame(() => { if (!$('#v-cegas').hidden) desenhar(); });
+  }).observe($('#grafico'));
+
+  rota();
+  fetch('caderno.json').then((r) => r.json()).then((c) => { st.caderno = c; renderCaderno(); renderRegua(); }).catch(() => {
+    $('#caderno').replaceChildren(novo('p', 'desc', 'Não consegui abrir o caderno.'));
+  });
+  abrirTrilha('op').catch(() => {
+    $('#m-par').textContent = 'Momentos indisponíveis';
+    $('#grafico').replaceChildren(novo('p', 'vazio', 'Não consegui abrir os momentos. Recarregue a página.'));
+  });
+})();
+</script>

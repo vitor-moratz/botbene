@@ -1,0 +1,13 @@
+{
+  "id": "M-001",
+  "trilha": "op",
+  "texto": "No -op, entre 16h e 20h, quando a vela fecha colada na máxima (fecho ≥ 0,83), a próxima desce.",
+  "origem": "mapa",
+  "condicoes": [
+    {"traco": "fecho", "min": 0.83},
+    {"traco": "hora", "em": [16, 17, 18, 19, 20]}
+  ],
+  "direcao": "put",
+  "vencimento": 60,
+  "pares": null
+}

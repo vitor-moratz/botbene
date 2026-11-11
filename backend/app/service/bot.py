@@ -52,7 +52,7 @@ from app.paper import CANCELED, judge, profit_units
 from app.service.chart import build_chart, build_reading, candle_dict, ldp_overlay, reading
 from app.service.config_store import ORDER_MODES, ConfigStore, UserConfig
 from app.service.events import EventHub
-from app.service.market import TO_NORMAL, market_target
+from app.service.market import TO_NORMAL, market_targets
 from app.service.orders import OrderManager
 from app.service.product import BEST, Offer, choose, market_view
 from app.service.watch import PairWatcher
@@ -565,6 +565,7 @@ class BotService:
                 "connection": dict(self.connection),
                 "watch": self.watcher.view(),
                 "auto_market": bool(self.filters.auto_market),
+                "market_mode": self._market_mode(),
                 "market_swaps": list(self.market_swaps),
                 "option_type": self.filters.option_type,
             }
@@ -901,6 +902,18 @@ class BotService:
                 r.payout = pick.payout
             r.product_epoch = self._product_epoch
 
+    def _market_mode(self) -> str:
+        return getattr(self.filters, "market_mode", "por_par") or "por_par"
+
+    def _swap_reason(self, kind: str, running: bool) -> str:
+        if self._market_mode() == "normal_primeiro":
+            if kind == TO_NORMAL:
+                return "normal primeiro: " + ("um par normal abriu" if running else "há par normal aberto")
+            return "normal primeiro: todos os pares normais " + ("fecharam" if running else "fechados")
+        if kind == TO_NORMAL:
+            return "mercado normal abriu" if running else "mercado normal aberto"
+        return "mercado normal fechou" if running else "mercado normal fechado"
+
     def _pick_markets(self, broker: Broker) -> None:
         """Antes de carregar (ao iniciar e ao reconectar): cada par já começa no mercado que está aberto."""
         if not self.filters.auto_market:
@@ -911,16 +924,17 @@ class BotService:
         except Exception as exc:  # noqa: BLE001 - sem a lista, fica com os pares como estão
             log.warning("Troca de mercado: lista de pares indisponível ao iniciar: %s", exc)
             return
+        targets = market_targets(list(self.runners), pairs, now, self.filters.min_payout, self._market_mode())
         picked: dict[str, AssetRunner] = {}
         swaps = []
         for name, r in self.runners.items():
-            target = market_target(name, pairs, now, self.filters.min_payout)
+            target = targets.get(name)
             if target is None or target[0] in self.runners or target[0] in picked:
                 picked.setdefault(name, r)
                 continue
             to = target[0]
             picked[to] = AssetRunner(to, r.timeframe, self._strategies_factory())
-            why = "mercado normal aberto" if target[1] == TO_NORMAL else "mercado normal fechado"
+            why = self._swap_reason(target[1], running=False)
             swaps.append({"at": now, "from": name, "to": to, "reason": why})
             log.info("Troca de mercado: %s começa como %s (%s)", name, to, why)
         if not swaps:
@@ -943,11 +957,12 @@ class BotService:
         try:
             pairs = self._market_pairs(broker)
             changed = False
+            targets = market_targets(list(self.runners), pairs, self._now(), self.filters.min_payout, self._market_mode())
             for r in list(self.runners.values()):
                 if self._stop.is_set():
                     return
                 now = self._now()  # de novo a cada par: carregar o anterior leva alguns segundos
-                target = market_target(r.asset, pairs, now, self.filters.min_payout)
+                target = targets.get(r.asset)
                 to = target[0] if target and target[0] not in self.runners else None
                 wait = self._switch_wait(r, now) if to else None
                 retry_at, retry_why = self._switch_retry.get(to, (0.0, "")) if to else (0.0, "")
@@ -957,7 +972,7 @@ class BotService:
                     changed |= (r.switch_to, r.switch_wait) != (to, wait)
                     r.switch_to, r.switch_wait = to, wait
                 if to and not wait:
-                    why = "mercado normal abriu" if target[1] == TO_NORMAL else "mercado normal fechou"
+                    why = self._swap_reason(target[1], running=True)
                     self._swap_runner(broker, r, to, why)
                     changed = False  # a troca já avisou o painel
             if changed:

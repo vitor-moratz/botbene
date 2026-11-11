@@ -10,7 +10,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from app.analytics.orders import MANUAL, order_rows, status_counts
+from app.analytics.orders import MANUAL, cycle_breakeven, cycle_limit, cycle_rows, order_rows, status_counts
 from app.analytics.stats import breakeven, summarize, total
 from app.analytics.timeline import BRT, GRANULARITY, cumulative, period_start, timeline
 from app.analytics.validation import summarize_validation
@@ -82,6 +82,7 @@ class ConfigPatch(BaseModel):
     stake: float | None = None
     stop_win: float | None = None
     stop_loss: float | None = None
+    stop_loss_trail: bool | None = None
     max_trades: int | None = None
     max_consecutive_losses: int | None = None
     martingale: bool | None = None
@@ -94,6 +95,7 @@ class ConfigPatch(BaseModel):
     assets: list[str] | None = None
     timeframe: Literal[60, 120, 300] | None = None
     auto_market: bool | None = None
+    market_mode: Literal["por_par", "normal_primeiro"] | None = None
     option_type: Literal["binary", "digital", "best"] | None = None
 
 
@@ -380,8 +382,13 @@ def order_stats(
     account: Literal["PRACTICE", "REAL"] | None = None,
     asset: str | None = None,
     strategy: str | None = None,
+    ciclo: bool = False,
 ) -> dict:
-    """Tela Desempenho: só ordens enviadas à corretora, em dinheiro. `account` separa demo de real (não se somam)."""
+    """Tela Desempenho: só ordens enviadas à corretora, em dinheiro. `account` separa demo de real (não se somam).
+
+    `ciclo`: conta as estratégias com gale por ciclo (a regra do painel). Os números do topo, os gráficos e as tabelas
+    ficam só com elas (misturar ciclo com ordem não tem mínimo único); em "por estratégia" cada uma aparece com o
+    mínimo dela, as sem gale contadas por ordem."""
     db = request.app.state.db
     since = period_start(period)
     every = db.list_orders(limit=100_000)
@@ -402,6 +409,34 @@ def order_stats(
 
     by_strategy = sorted(summarize(rows, lambda r: r["strategy"]), key=lambda g: order.get(g.key, 99))
     mine = [o for o in every if account is None or o["account"] == account]  # o que dá para filtrar, em qualquer período
+    cycle = None
+    staked = round(sum(r["amount"] for r in rows), 2)  # das ordens de verdade (a linha do ciclo leva só a 1ª aposta)
+    cfg = request.app.state.config.get()
+    gale = set(cfg.gale_strategies) if cfg.martingale else set()
+    if ciclo and gale and any(r["strategy"] in gale for r in rows):
+        risk = request.app.state.bot.orders.snapshot()
+        # ciclos em andamento (um por estratégia): ficam fora até terminar
+        running = {v["strategy"] for v in risk.get("cycles") or [] if v.get("gale_level")} if request.app.state.bot.running else set()
+        mixed = cycle_rows(rows, gale, cfg.gale_levels, open_tail=running)
+        gale_cycles = [r for r in mixed if r["strategy"] in gale]
+        paid = [r["payout"] for r in rows if r["strategy"] in gale and r["result"] == "win" and r.get("payout")]
+        pay = sum(paid) / len(paid) if paid else request.app.state.bot.settings.default_payout
+        be = cycle_breakeven(cfg.stake, cfg.gale_levels, pay)
+        by_strategy = sorted(summarize(mixed, lambda r: r["strategy"]), key=lambda g: order.get(g.key, 99))
+        for g in by_strategy:
+            if g.key in gale:
+                g.breakeven = cycle_breakeven(cfg.stake, cfg.gale_levels, pay)
+        won = sum(1 for r in gale_cycles if r["result"] == "win")
+        lost_rows = [r for r in gale_cycles if r["result"] == "loss"]
+        lost = len(lost_rows)
+        cycle = {"strategies": sorted({r["strategy"] for r in gale_cycles}, key=lambda n: order.get(n, 99)),
+                 "won": won, "lost_cycles": lost, "losses": sum(r.get("losses", 1) for r in lost_rows),  # ordens perdidas
+                 "every_n": round((won + lost) / lost, 1) if lost else None, "limit_n": round(cycle_limit(cfg.stake, cfg.gale_levels, pay), 1),
+                 "breakeven": be, "gale_levels": cfg.gale_levels, "in_progress": bool(running)}
+        staked = round(sum(r["amount"] for r in rows if r["strategy"] in gale), 2)
+        rows = gale_cycles
+        overall = total(rows)
+        overall.breakeven = be
     return {
         "period": period,
         "since_ts": since,
@@ -409,7 +444,7 @@ def order_stats(
         "granularity": GRANULARITY[period],
         "total": overall.to_dict(),
         "breakeven": overall.breakeven if overall.breakeven is not None else breakeven(0.85),
-        "staked": round(sum(r["amount"] for r in rows), 2),
+        "staked": staked,
         "by_strategy": [g.to_dict() | {"label": label(g.key)} for g in by_strategy],
         "by_setup": [g.to_dict() for g in sorted(summarize(rows, lambda r: f"{r['strategy']}|{r['setup']}"), key=lambda g: (-g.n, g.key))],
         "by_hour": [g.to_dict() for g in sorted(summarize(rows, lambda r: _hour_brt(r["entry_ts"])), key=lambda g: g.key)],
@@ -421,4 +456,5 @@ def order_stats(
         **status_counts(orders),
         "assets": sorted({o["asset"] for o in mine}),
         "strategies": [{"name": n, "label": label(n)} for n in sorted({o["strategy"] for o in mine}, key=lambda n: order.get(n, 99))],
+        "cycle": cycle,
     }

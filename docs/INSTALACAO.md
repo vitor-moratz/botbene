@@ -132,7 +132,7 @@ Pronto, está instalado.
 
    - **Estratégias:** cada uma fica em **Desligada**, **Observar** (anota e mede, sem mandar ordem) ou **Operar** (pode mandar ordem, conforme o modo). Deixe **Apostila · retração no comando** em **Operar**. Ligar ou desligar vale no próximo início do bot; trocar entre Observar e Operar vale na hora.
    - **Ajuda visual no gráfico:** as linhas e setas dos scripts (LDP v1.3, WIKI PRO). Eles só desenham: nunca decidem entrada e não entram nas estatísticas.
-   - **Pares:** escolha até 20. Os pares normais terminam em **`-op`** (ex.: `EURUSD-op`). Os `-OTC` costumam abrir quando o mercado normal fecha, como no fim de semana. Uma instalação nova já vem com os 12 pares `-op` em que a retração no comando foi estudada e com a troca automática entre OTC e mercado normal ligada: o bot opera o `-op` sempre que ele está aberto.
+   - **Pares:** escolha até 20. Os pares normais terminam em **`-op`** (ex.: `EURUSD-op`). Os `-OTC` costumam abrir quando o mercado normal fecha, como no fim de semana. Uma instalação nova já vem com os 12 pares `-op` em que a retração no comando foi estudada e com a troca automática entre OTC e mercado normal ligada: o bot opera o `-op` sempre que ele está aberto. A troca tem dois jeitos: **cada par sozinho** (o par vai para o OTC quando o normal dele fecha) ou **normal primeiro** (enquanto algum par normal estiver aberto, todos ficam no normal e os fechados esperam; só quando todos os normais fecham é que todos vão para o OTC).
    - **Tipo de opção:** **Binária** (padrão), **Digital** ou **A de maior payout** (a cada vela, o bot compara a binária e a digital de cada par e entra na que paga mais). As duas usam o mesmo preço na IQ; muda só o produto comprado.
    - **Vela:** 1 minuto.
 5. **Gestão de risco:**
@@ -142,6 +142,7 @@ Pronto, está instalado.
    | Valor de cada entrada | Quanto cada ordem aposta, na moeda da conta (a demo da IQ é em dólar) | 2 |
    | Stop win | Para de abrir ordens quando o lucro da sessão chega neste valor | 20 |
    | Stop loss | Só abre uma ordem nova se, perdendo ela e as que ainda estão abertas, a perda da sessão não passar deste valor | 20 |
+   | Stop loss acompanha o lucro | O stop loss passa a contar do **melhor resultado da sessão**, e não do Iniciar: com 50, a sessão que chegou a +80 para antes de cair abaixo de +30 (protege o lucro). Sem lucro ainda, vale igual. Muda na hora, mesmo com o bot rodando | Desligado |
    | Máximo de entradas por sessão | Limite de ordens desde que você clicou em Iniciar bot | 30 |
    | Pausar depois de X perdas seguidas | Para depois de X perdas em sequência | 4 |
    | Payout mínimo (%) | Não abre pedido nem manda ordem em par com payout menor. Com payout menor, o acerto para empatar sobe (85% → 54,1%, 80% → 55,6%, 75% → 57,1%) | 80 |

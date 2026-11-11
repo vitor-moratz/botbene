@@ -1,5 +1,6 @@
 from app.strategies.base import Direction, Signal, Strategy
 from app.strategies.bb_rci import NAME as BB_RCI_NAME
+from app.strategies.bb_rci_ny import NAME as BB_RCI_NY_NAME
 from app.strategies.bb_rci_v2 import NAME as BB_RCI_V2_NAME
 from app.strategies.deeplob import NAME as DEEPLOB_NAME
 from app.strategies.esticao import NAME as ESTICAO_NAME
@@ -11,6 +12,7 @@ from app.strategies.recipes import RETRACAO_LOTE, REVERSAO_FORCA, REVERSAO_INDEC
 from app.strategies.retracao_comando import NAME as RETRACAO_NAME
 from app.strategies.retracao_comando import NAME_V2 as RETRACAO_V2_NAME
 from app.strategies.score import NAME as SCORE_NAME
+from app.strategies.virada_tarde import NAME as VIRADA_NAME
 from app.strategies.wiki_pro_v21 import WikiProV21
 
 # Scripts que dão sinal no FECHAMENTO da vela (entrada na abertura da seguinte).
@@ -24,7 +26,7 @@ REGISTRY: dict[str, type[Strategy]] = {
 # As duas da apostila entram DENTRO da vela (gatilho de 15 s) e são tratadas à parte pelo bot.
 STRATEGY_ORDER: list[str] = [LdpV13.name, LdpV13Linhas.name, WikiProV21.name, APOSTILA_NAME, RETRACAO_NAME,
                               RETRACAO_LOTE, REVERSAO_FORCA, REVERSAO_INDECISAO, SCORE_NAME, RETRACAO_V2_NAME, ESTICAO_NAME,
-                              DEEPLOB_NAME, BB_RCI_NAME, BB_RCI_V2_NAME]
+                              DEEPLOB_NAME, BB_RCI_NAME, BB_RCI_V2_NAME, VIRADA_NAME, BB_RCI_NY_NAME]
 
 STRATEGY_LABELS: dict[str, str] = {
     LdpV13.name: "LDP v1.3",
@@ -41,6 +43,8 @@ STRATEGY_LABELS: dict[str, str] = {
     DEEPLOB_NAME: "Pesquisa · DeepLOB (IA)",
     BB_RCI_NAME: "Pesquisa · Bollinger + RCI",
     BB_RCI_V2_NAME: "Pesquisa · Bollinger + RCI v2",
+    VIRADA_NAME: "Padrão Moratz · Virada da Tarde",
+    BB_RCI_NY_NAME: "Bollinger + RCI · fechamento NY",
 }
 
 # Entrada que o usuário fez na mão. Fica só nas ordens: não é estratégia e nunca entra nas estatísticas delas.

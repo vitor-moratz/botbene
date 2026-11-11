@@ -4,7 +4,7 @@
 
   // Ordem fixa: a cor segue o script, nunca a posição na lista.
   var STRATEGY_ORDER = ['ldp_v13', 'ldp_v13_linhas', 'wiki_pro_v21', 'ldp_apostila', 'retracao_comando',
-    'retracao_lote', 'reversao_forca', 'reversao_indecisao', 'score_ldp', 'retracao_comando_v2', 'esticao', 'deeplob_iq', 'bb_rci', 'bb_rci_v2'];
+    'retracao_lote', 'reversao_forca', 'reversao_indecisao', 'score_ldp', 'retracao_comando_v2', 'esticao', 'deeplob_iq', 'bb_rci', 'bb_rci_v2', 'virada_tarde', 'bb_rci_ny'];
   var SCORE = 'score_ldp';  // o combo: várias estratégias e padrões juntos decidem a entrada
   var RETRACAO_V2 = 'retracao_comando_v2';
   var ESTICAO = 'esticao';  // da pesquisa (08/11): arma os dois lados e entra contra o disparo dos 10 s iniciais
@@ -24,10 +24,12 @@
     deeplob_iq: 'Pesquisa · DeepLOB (IA)',
     bb_rci: 'Pesquisa · Bollinger + RCI',
     bb_rci_v2: 'Pesquisa · Bollinger + RCI v2',
+    virada_tarde: 'Padrão Moratz · Virada da Tarde',
+    bb_rci_ny: 'Bollinger + RCI · fechamento NY',
     manual: 'Entrada manual'
   };
   var MANUAL = 'manual';  // ordem que você fez na mão: não é estratégia e não entra nas estatísticas delas
-  var TRIGGER_LABELS = { retracao: 'Retração', reversao: 'Reversão', throwback: 'Throwback', comando: 'Retração no comando', score: 'Score', esticao: 'Esticão', deeplob: 'DeepLOB', bb_rci: 'Bollinger + RCI', bb_rci_v2: 'Bollinger + RCI v2' };
+  var TRIGGER_LABELS = { retracao: 'Retração', reversao: 'Reversão', throwback: 'Throwback', comando: 'Retração no comando', score: 'Score', esticao: 'Esticão', deeplob: 'DeepLOB', bb_rci: 'Bollinger + RCI', bb_rci_v2: 'Bollinger + RCI v2', virada_tarde: 'Virada da Tarde' };
   var CONF_LABELS = {
     gatilho: 'gatilho', forca: 'marcação forte', contexto: 'nova alta/baixa + nova posição',
     espaco: 'espaço até a barreira', tendencia: 'tendência EMA',
@@ -112,6 +114,7 @@
   var weekdayTimeFmt = new Intl.DateTimeFormat('pt-BR', { timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit' });
   var pctFmt = new Intl.NumberFormat('pt-BR', { style: 'percent', minimumFractionDigits: 1, maximumFractionDigits: 1 });
   var unitsFmt = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  var oneFmt = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });  // "1 ciclo perdido a cada 10,7"
   var intFmt = new Intl.NumberFormat('pt-BR');
   var moneyFmts = {};
 
@@ -123,7 +126,7 @@
     // O score usa a cor da "LDP v1.3 + regra das linhas", que só existe na ferramenta de pesquisa; a v2 da retração tem a 9ª
     // o esticão, a 10ª, o DeepLOB, a 11ª, a Bollinger + RCI, a 12ª, e a v2 dela, a 13ª.
     var i = name === SCORE ? 1 : name === RETRACAO_V2 ? 8 : name === ESTICAO ? 9 : name === DEEPLOB ? 10 : name === BB_RCI ? 11
-      : name === BB_RCI_V2 ? 12 : STRATEGY_ORDER.indexOf(name);
+      : name === BB_RCI_V2 ? 12 : name === 'virada_tarde' ? 13 : name === 'bb_rci_ny' ? 14 : STRATEGY_ORDER.indexOf(name);
     return cssVar('--series-' + (i >= 0 ? i + 1 : 4));
   }
   function label(name) { return LABELS[name] || name; }
@@ -449,6 +452,7 @@
   state.recentPairs = loadStored('botbene-recent-pairs', []);
   state.sessionOnly = loadStored('botbene-painel-sessao', false);  // Painel: só a sessão, em vez do dia
   state.byCycle = loadStored('botbene-painel-ciclo', false);  // Painel: acerto por ciclo de gale, em vez de por ordem
+  state.pStrategy = loadStored('botbene-painel-estrategia', '');  // Painel: números do topo de uma estratégia só ('' = todas)
   state.manualMinutes = loadStored('botbene-manual-min', 1);
   state.manualAmount = loadStored('botbene-manual-valor', null);
   state.manualKind = loadStored('botbene-manual-tipo', null);
@@ -1660,6 +1664,28 @@
   }
 
   // ------------------------------------------------------------------ ordens
+  // Stop loss que acompanha o lucro: em que resultado da sessão ele para (o piso sobe com o melhor resultado).
+  function stopFloorText(risk) {
+    var c = risk.config || {};
+    if (!c.stop_loss_trail || risk.stop_floor == null) return '';
+    var peak = risk.peak_pnl || 0;
+    return ' acompanhando o lucro' + (peak > 0
+      ? ' (melhor ponto ' + fmtMoney(peak, true) + ': para abaixo de ' + fmtMoney(risk.stop_floor, true) + ')'
+      : ' (ainda sem lucro: para em ' + fmtMoney(risk.stop_floor, true) + ')');
+  }
+  // Exemplo na Configuração, com o valor digitado.
+  function renderTrailExample() {
+    var el = $('#cfg-trail-example');
+    if (!el) return;
+    var sl = numField('#cfg-stop-loss');
+    if (!$('#cfg-stop-loss-trail').checked || !sl) { el.textContent = ''; el.hidden = true; return; }
+    var peak = Math.max(100, Math.round(sl * 2));
+    el.hidden = false;
+    el.textContent = 'Com ' + fmtMoney(sl) + ': começa parando em ' + fmtMoney(-sl, true) + '. Se a sessão chegar a ' +
+      fmtMoney(peak, true) + ', passa a parar abaixo de ' + fmtMoney(peak - sl, true) + ' e garante esse lucro (menos o que ' +
+      'estiver aberto na hora). Quanto menor o stop loss, mais lucro fica protegido, mas a sessão também para mais cedo.';
+  }
+
   function renderRisk(risk) {
     var el = $('#risk-body');
     if (!risk) { el.innerHTML = ''; return; }
@@ -1672,7 +1698,7 @@
     var html = '<div class="orders-cap">Nesta sessão</div>' +
       cells.map(function (x) { return '<div class="cell"><div class="v">' + x[1] + '</div><div class="l">' + x[0] + '</div></div>'; }).join('');
     html += '<div class="risk-line muted small">Entrada ' + fmtMoney(c.stake) + ' · stop win ' + (c.stop_win ? fmtMoney(c.stop_win) : 'desligado') +
-      ' · stop loss ' + (c.stop_loss ? fmtMoney(c.stop_loss) : 'desligado') +
+      ' · stop loss ' + (c.stop_loss ? fmtMoney(c.stop_loss) + stopFloorText(risk) : 'desligado') +
       (c.martingale ? ' · martingale até ' + c.gale_levels + ' gale' + (c.gale_levels > 1 ? 's' : '') +
         (c.gale_strategies ? ' só em ' + esc(galeNames(c)) : '') +
         (c.max_lost_cycles ? ' · stop de ciclo: ' + (risk.lost_cycles || 0) + ' de ' + c.max_lost_cycles + ' perdidos'
@@ -1866,14 +1892,18 @@
         'derrota só se perdeu até o último gale (ou ficou no meio quando o bot parou). O resultado em dinheiro não muda.">' +
         '<input type="checkbox" id="p-cycle"' + (state.byCycle ? ' checked' : '') + '> contar por ciclo de gale</label>';
     }
+    box += '<label class="check" title="Os números do topo (resultado, acerto, contagem e mínimo) de uma estratégia só">Estratégia ' +
+      '<select id="p-strategy" class="scope-select"></select></label>';
     if (!main.length) {
       $('#p-scope').innerHTML = '<span>Nenhuma estratégia ligada. Escolha em Configuração.</span>' + box;
+      renderStrategyPick();
       return;
     }
     var observing = strategiesIn(['observe']).filter(function (n) { return main.indexOf(n) < 0; });
     $('#p-scope').innerHTML = '<span>Ordens ' + painelWhen(painelSince()) + ' na ' + accountLabel() + ' · sinais de ' +
       main.map(function (n) { return stratHtml(n); }).join(' ') + '</span>' + box +
       (observing.length ? '<span class="muted small">Só observando (sem ordem): ' + esc(observing.map(label).join(', ')) + '</span>' : '');
+    renderStrategyPick();
   }
   // As que estão rodando agora (ligar ou desligar vale no próximo início); com o bot parado, as ligadas.
   function shownStrategies() {
@@ -1918,19 +1948,47 @@
     var n = state.config.gale_levels || 1;
     return 'por ciclo, com ' + n + ' gale' + (n > 1 ? 's' : '') + ' · ' + base;
   }
-  // Acerto mínimo na contagem por ciclo: o ciclo ganho rende ~uma entrada e conta 1 vitória; o perdido custa a entrada
-  // e todos os gales e conta 1 derrota por ordem perdida (3 no G2). Empata quando vitórias × ganho = ciclos perdidos × perda.
+  // Acerto mínimo na contagem por ciclo (% de ciclos ganhos): o ciclo ganho rende ~uma entrada; o perdido custa a entrada e
+  // todos os gales. Empata quando ciclos ganhos × ganho = ciclos perdidos × perda (com G2 e payout de 83%, ~90,7%).
   function cycleBreakeven(c, payout) {
     var stake = c.stake || 2, levels = c.martingale ? (c.gale_levels || 1) : 0, loss = 0, s = stake;
     for (var i = 0; i <= levels; i++) { loss += s; s = galeStake(stake, loss, payout); }
-    return loss / (loss + (levels + 1) * stake * payout);
+    return loss / (loss + stake * payout);  // % de ciclos ganhos: o ganho rende ~1 entrada, o perdido custa tudo
+  }
+  // Para empatar na contagem por ciclo: pode perder no máximo 1 ciclo a cada N (os ganhos cobrem o perdido).
+  function cycleLimit(c, payout) {
+    var stake = c.stake || 2, levels = c.martingale ? (c.gale_levels || 1) : 0, loss = 0, s = stake;
+    for (var i = 0; i <= levels; i++) { loss += s; s = galeStake(stake, loss, payout); }
+    return loss / (stake * payout) + 1;
+  }
+  // Esta ordem entra na contagem por ciclo? (gale > 0, ou estratégia marcada para o gale na Configuração)
+  function orderInGale(o) {
+    var c = state.config || {};
+    var list = c.gale_strategies != null ? c.gale_strategies : null;
+    return (o.gale || 0) > 0 || (!!c.martingale && (list == null || list.indexOf(o.strategy) >= 0));
+  }
+  function galeLabels(rows) {
+    var names = [];
+    rows.forEach(function (o) { if (names.indexOf(o.strategy) < 0) names.push(o.strategy); });
+    return names.map(label).join(', ');
+  }
+  // Resumo dos ciclos (linhas de galeCycles): "140 ciclos ganhos · 29 derrotas (10 ciclos perdidos) · 1 a cada 15 (limite 1 a cada 10,7)"
+  function cycleSummaryText(cycRows, payout) {
+    var won = cycRows.filter(function (r) { return r.cycle && r.status === 'win'; }).length;
+    var lostRows = cycRows.filter(function (r) { return r.cycle && r.status === 'loss'; });
+    var lost = lostRows.length;
+    var orders = lostRows.reduce(function (s, r) { return s + (r.losses || 0); }, 0);
+    var lim = cycleLimit(state.config || {}, payout);
+    return intFmt.format(won) + ' ciclos ganhos · ' + intFmt.format(lost) + ' perdido' + (lost === 1 ? '' : 's') +
+      (lost ? ' (' + orders + ' ordens perdidas) · 1 a cada ' + oneFmt.format((won + lost) / lost) : '') +
+      ' · limite 1 a cada ' + oneFmt.format(lim);
   }
   // Ciclos de gale a partir das ordens. Entrada (gale 0) de quem usa o gale abre um ciclo; gale 1, 2… continua o ciclo
   // aberto. Termina na vitória (ganho) ou numa perda sem continuação: chegou ao último gale, a entrada seguinte já abriu
   // outro ciclo, ou o bot parou no meio (perdido, porque o dinheiro foi perdido). Quem não usa o gale: cada ordem é um
   // ciclo. Bloqueadas e recusadas passam como estão. Cada ciclo vira uma linha no formato das ordens (para orderTotals):
-  // o ganho conta 1 vitória (as perdas dentro dele não contam); o perdido conta cada ordem perdida (3 no G2), para o
-  // acerto não esconder o tamanho da perda. As derrotas a mais vão em linhas extras, sem dinheiro (o total não muda).
+  // ganho = 1 vitória, perdido = 1 derrota (% de ciclos ganhos, comparado com o mínimo de cycleBreakeven); quantas ordens
+  // o ciclo perdeu fica em `losses`, para o texto mostrar o tamanho da perda.
   function galeCycles(rows) {
     var risk = state.status && state.status.risk;
     // a configuração salva: o placar de risco do bot só recebe a configuração quando o bot inicia
@@ -1943,8 +2001,6 @@
     var out = [], open = {};
     var finish = function (cur) {
       cur.status = cur.loss ? (cur.last === 'sem_resultado' ? 'sem_resultado' : 'loss') : 'empate';
-      var extra = cur.status === 'loss' ? cur.losses - 1 : cur.status === 'sem_resultado' ? cur.losses : 0;
-      for (var i = 0; i < extra; i++) out.push({ status: 'loss', profit: 0, strategy: cur.strategy, account: cur.account, cycleExtra: true });
       delete open[cur.key];
     };
     sorted.forEach(function (o) {
@@ -1978,28 +2034,58 @@
     return out;
   }
 
-  // Números do topo e placar: só as ordens da conta em uso (demo e real não se somam).
+  function pickLabel(n) { return n === MANUAL ? 'Entrada manual' : label(n); }
+  // Opções da escolha de estratégia do Painel: as que operam e as que têm ordem no período (a escolhida fica sempre).
+  function painelMine() {
+    var acct = state.chosenAccount || 'PRACTICE';
+    return (state.painelOrders || []).filter(function (o) { return (o.account || 'PRACTICE') === acct; });
+  }
+  function renderStrategyPick(mine) {
+    var sel = $('#p-strategy');
+    if (!sel) return;
+    mine = mine || painelMine();
+    var names = strategiesIn(['operate']);
+    mine.forEach(function (o) { if (o.strategy && names.indexOf(o.strategy) < 0) names.push(o.strategy); });
+    if (state.pStrategy && names.indexOf(state.pStrategy) < 0) names.push(state.pStrategy);
+    var rank = function (n) { var i = STRATEGY_ORDER.indexOf(n); return n === MANUAL ? 1000 : i < 0 ? 999 : i; };
+    names.sort(function (a, b) { return rank(a) - rank(b); });
+    var key = names.join('|');
+    if (sel.dataset.key !== key) {
+      sel.innerHTML = '<option value="">Todas</option>' + names.map(function (n) {
+        return '<option value="' + esc(n) + '">' + esc(pickLabel(n)) + '</option>';
+      }).join('');
+      sel.dataset.key = key;
+    }
+    sel.value = state.pStrategy || '';
+  }
+
+  // Números do topo e placar: só as ordens da conta em uso (demo e real não se somam). A escolha "Estratégia" deixa os
+  // números do topo de uma estratégia só (o placar continua com todas, com a escolhida em destaque).
   function renderOrderStats() {
     var since = state.ordersSince;
-    var acct = state.chosenAccount || 'PRACTICE';
-    var mine = (state.painelOrders || []).filter(function (o) { return (o.account || 'PRACTICE') === acct; });
-    var byCycle = cycleMode();
-    if (byCycle) mine = galeCycles(mine);
-    var t = orderTotals(mine);
+    var mineAll = painelMine();
+    renderStrategyPick(mineAll);
+    var pick = state.pStrategy || '';
+    var mine = pick ? mineAll.filter(function (o) { return o.strategy === pick; }) : mineAll;
+    var tAll = orderTotals(mine);  // o dinheiro é o de todas (ou o da escolhida)
+    var galeRows = cycleMode() ? mine.filter(orderInGale) : [];
+    var byCycle = galeRows.length > 0;  // conta por ciclo só quem usa gale; nunca mistura com quem conta por ordem
+    var cycRows = byCycle ? galeCycles(galeRows) : [];
+    var t = byCycle ? orderTotals(cycRows) : tAll;
+    var who = byCycle ? ' · ' + galeLabels(galeRows) : pick ? ' · ' + pickLabel(pick) : '';
     var when = painelWhen(since);
-    var payout = t.paid || (state.status && state.status.payout) || 0.85;
-    $('#p-profit-label').textContent = 'Resultado ' + when;
-    $('#p-wr-label').textContent = (byCycle ? 'Acerto por ciclo ' : 'Acerto ') + (since ? 'na sessão' : 'hoje');
-    $('#p-n-label').textContent = (byCycle ? 'Contagem por ciclo ' : 'Ordens com resultado ') + (since ? 'na sessão' : 'hoje');
-    $('#p-board-n').textContent = byCycle ? 'Contagem' : 'Ordens';
+    var payout = t.paid || tAll.paid || (state.status && state.status.payout) || 0.85;
+    $('#p-profit-label').textContent = 'Resultado ' + when + (pick ? ' · ' + pickLabel(pick) : '');
+    $('#p-wr-label').textContent = (byCycle ? 'Acerto por ciclo' : 'Acerto') + who + ' ' + (since ? 'na sessão' : 'hoje');
+    $('#p-n-label').textContent = (byCycle ? 'Contagem por ciclo' : 'Ordens com resultado') + who + ' ' + (since ? 'na sessão' : 'hoje');
+    $('#p-board-n').textContent = cycleMode() ? 'Contagem' : 'Ordens';
     $('#p-be-sub').textContent = beSubText(state.status);
     renderKpis('p', { total: t, breakeven: byCycle ? cycleBreakeven(state.config, payout) : 1 / (1 + payout) }, true);
-    if (byCycle) {
-      var lostCycles = mine.filter(function (r) { return r.cycle && r.status === 'loss'; }).length;
-      $('#p-n-sub').textContent = intFmt.format(t.wins) + ' ciclos ganhos · ' + intFmt.format(t.losses) + ' derrotas' +
-        (lostCycles ? ' (' + lostCycles + ' ciclo' + (lostCycles > 1 ? 's' : '') + ' perdido' + (lostCycles > 1 ? 's' : '') + ')' : '') +
-        ' · ' + intFmt.format(t.draws) + ' empates';
-    }
+    var allCount = tAll.n + tAll.draws;
+    $('#p-profit').textContent = allCount ? fmtMoney(tAll.profit, true) : '—';
+    $('#p-profit').className = 'hero-value ' + (allCount ? signClass(tAll.profit) : '');
+    if (byCycle) $('#p-n-sub').textContent = cycleSummaryText(cycRows, payout);
+    t = tAll;  // daqui para baixo (avisos de abertas, não enviadas…), todas as ordens
     var notes = [];
     if (t.open) notes.push(t.open + (t.open > 1 ? ' abertas' : ' aberta'));
     if (t.notSent) notes.push(t.notSent + ' não saíram');
@@ -2008,10 +2094,11 @@
     var head = t.n + t.draws ? 'em dinheiro, só ordens que entraram'
       : mode === 'sinais' ? 'modo "só sinais": nenhuma ordem sai' : 'nenhuma ordem com resultado ' + when;
     $('#p-profit-sub').textContent = head + (notes.length ? ' · ' + notes.join(' · ') : '');
-    renderBoard(mine, since);
+    renderBoard(cycleMode() ? galeCycles(mineAll) : mineAll, since, payout);
   }
 
-  function renderBoard(rows, since) {
+  function renderBoard(rows, since, payout) {
+    payout = payout || (state.status && state.status.payout) || 0.85;
     $('#p-board-title').textContent = 'Placar ' + painelWhen(since) + ' por estratégia';
     var by = {};
     rows.forEach(function (o) { (by[o.strategy] = by[o.strategy] || []).push(o); });
@@ -2022,26 +2109,36 @@
     $('#p-board').innerHTML = names.length ? names.map(function (name) {
       var t = orderTotals(by[name] || []);
       var count = t.n + t.draws;
+      var cyc = cycleMode() && (by[name] || []).some(function (r) { return r.cycle; });
+      var min = cyc ? cycleBreakeven(state.config, payout) : 1 / (1 + (t.paid || payout));
       var who = name === MANUAL ? '<span class="key">Entrada manual</span>'
         : stratHtml(name) + '<span class="tag">' + (STATE_TAG[strategyState(name)] || '') + '</span>';
       var extra = [];
       if (t.open) extra.push(t.open + (t.open > 1 ? ' abertas' : ' aberta'));
       if (t.notSent) extra.push(t.notSent + ' não saíram (bloqueadas ou recusadas)');
-      return '<tr><td>' + who + (extra.length ? '<div class="muted small">' + extra.join(' · ') + '</div>' : '') +
+      if (cyc) {
+        var lostC = (by[name] || []).filter(function (r) { return r.cycle && r.status === 'loss'; }).length;
+        var wonC = (by[name] || []).filter(function (r) { return r.cycle && r.status === 'win'; }).length;
+        extra.push('por ciclo' + (lostC ? ': 1 perdido a cada ' + oneFmt.format((wonC + lostC) / lostC) : ': nenhum perdido') +
+          ' (limite 1 a cada ' + oneFmt.format(cycleLimit(state.config, payout)) + ')');
+      }
+      return '<tr' + (name === state.pStrategy ? ' class="picked"' : '') + '><td>' + who + (extra.length ? '<div class="muted small">' + extra.join(' · ') + '</div>' : '') +
         '</td><td class="num">' + intFmt.format(count) + '</td><td class="num">' + t.wins + ' · ' + t.losses +
-        '</td><td class="num">' + fmtPct(t.winrate) + '</td><td class="num ' + signClass(t.profit) + '">' +
+        '</td><td class="num">' + fmtPct(t.winrate) + (count ? '<div class="muted small">mín. ' + fmtPct(min) + '</div>' : '') +
+        '</td><td class="num ' + signClass(t.profit) + '">' +
         (count ? fmtMoney(t.profit, true) : '—') + '</td></tr>';
     }).join('') : '<tr><td colspan="5" class="muted">Nenhuma estratégia operando: só as marcadas "opera" mandam ordem.</td></tr>';
     var observing = strategiesIn(['observe']).filter(function (n) { return names.indexOf(n) < 0; }).length;
     var notes = [];
     if (cycleMode()) {
       var c = state.config, galeWho = c.gale_strategies ? c.gale_strategies.map(label).join(', ') : 'todas';
-      var p = (state.status && state.status.payout) || 0.85;
-      notes.push('Contando por ciclo de gale: ciclo ganho conta 1 vitória (as perdas dentro dele não contam); ciclo perdido conta ' +
-        'cada ordem perdida (' + ((c.gale_levels || 1) + 1) + ' derrotas com ' + (c.gale_levels || 1) + ' gale' + ((c.gale_levels || 1) > 1 ? 's' : '') +
-        '). Nessa conta, quem usa gale (' + galeWho + ') precisa de ' + fmtPct(cycleBreakeven(c, p)) +
-        ' para empatar; quem não usa continua precisando de ' + fmtPct(1 / (1 + p)) + '.');
+      var p = payout;  // o mesmo payout das linhas do placar (o pago de fato)
+      notes.push('Contando por ciclo de gale: a % é de ciclos ganhos (ganhou na entrada ou em algum gale) sobre os ciclos com ' +
+        'resultado. Como o ciclo perdido custa a entrada e todos os gales, quem usa gale (' + galeWho + ') precisa ganhar ' +
+        fmtPct(cycleBreakeven(c, p)) + ' dos ciclos para empatar; quem não usa é contado por ordem e precisa de ' + fmtPct(1 / (1 + p)) +
+        '.' + (state.pStrategy ? '' : ' Os números do topo (acerto e contagem) são só de quem usa gale; o resultado em dinheiro é o de todas.'));
     }
+    if (state.pStrategy) notes.push('Os números do topo são só de ' + pickLabel(state.pStrategy) + ' (escolha em Estratégia, acima).');
     if (observing) {
       notes.push((observing > 1 ? observing + ' estratégias só observam e não mandam ordem' : '1 estratégia só observa e não manda ordem') +
         ': o acerto delas nos sinais está em Entradas.');
@@ -2649,8 +2746,8 @@
       function pl(n, one, many) { return '<span><strong>' + intFmt.format(n) + '</strong> ' + (n === 1 ? one : many) + '</span>'; }
       $('#e-summary').innerHTML = rows.length
         ? pl(rows.length, 'sinal', 'sinais') + pl(w, 'win', 'wins') + pl(l, 'loss', 'losses') + pl(e, 'empate', 'empates') + pl(p, 'pendente', 'pendentes') +
-          '<span>Acerto <strong>' + (w + l ? fmtPct(w / (w + l)) : '—') + '</strong></span><span>Resultado <strong class="' + signClass(profit) + '">' + fmtUnits(profit) + '</strong> entradas</span>' +
-          (orders ? pl(sent, 'virou ordem', 'viraram ordem') : '')
+          '<span>Acerto por sinal <strong>' + (w + l ? fmtPct(w / (w + l)) : '—') + '</strong></span><span>Resultado <strong class="' + signClass(profit) + '">' + fmtUnits(profit) + '</strong> entradas</span>' +
+          (orders ? pl(sent, 'virou ordem', 'viraram ordem') : '') + entriesCycleText(rows, bySignal)
         : '';
       var body = $('#e-body');
       if (!rows.length) {
@@ -2669,6 +2766,17 @@
     }).catch(function (err) { $('#e-body').innerHTML = '<tr><td colspan="11">Erro: ' + esc(err.message) + '</td></tr>'; });
   }
 
+  // Entradas: os ciclos das ordens com gale que saíram desses sinais (o acerto por sinal não conhece ciclo).
+  function entriesCycleText(rows, bySignal) {
+    if (!state.config || !state.config.martingale) return '';
+    var orders = rows.map(function (r) { return bySignal[r.id]; }).filter(function (o) {
+      return o && (o.status === 'win' || o.status === 'loss' || o.status === 'empate') && orderInGale(o);
+    });
+    if (!orders.length) return '';
+    var cyc = galeCycles(orders), paid = orderTotals(orders).paid || 0.85;
+    return '<span>Ordens com gale destes sinais (' + esc(galeLabels(orders)) + '): <strong>' + esc(cycleSummaryText(cyc, paid)) + '</strong></span>';
+  }
+
   // ------------------------------------------------------------------ DESEMPENHO
   // Só ordens enviadas à corretora, em dinheiro. Demo e real não se somam: a conta começa na escolhida na barra lateral.
   function refreshDesempenho() {
@@ -2677,10 +2785,28 @@
     var q = ['period=' + state.dPeriod, 'account=' + encodeURIComponent(account)];
     if (strategy) q.push('strategy=' + encodeURIComponent(strategy));
     if (asset) q.push('asset=' + encodeURIComponent(asset));
+    $('#d-cycle-row').hidden = !(state.config && state.config.martingale);
+    $('#d-cycle').checked = !!state.byCycle;
+    if (cycleMode()) q.push('ciclo=true');
     api('/api/stats/orders?' + q.join('&')).then(function (st) {
       $('#d-note').hidden = true;
-      $('#d-profit-label').textContent = 'Resultado ' + PERIOD_TEXT[state.dPeriod];
+      var cyc = st.cycle;  // servidor antigo ou sem gale no período: não vem
+      var who = cyc ? ' · ' + cyc.strategies.map(label).join(', ') : '';
+      $('#d-profit-label').textContent = 'Resultado ' + PERIOD_TEXT[state.dPeriod] + who;
+      $('#d-wr-label').textContent = cyc ? 'Acerto por ciclo' + who : 'Acerto';
+      $('#d-n-label').textContent = cyc ? 'Contagem por ciclo' + who : 'Ordens com resultado';
+      $('#d-be-sub').textContent = cyc ? 'por ciclo, com ' + cyc.gale_levels + ' gale' + (cyc.gale_levels > 1 ? 's' : '') : '1 ÷ (1 + payout)';
+      $('#d-cycle-note').hidden = !cyc;
+      $('#d-cycle-note').textContent = cyc ? 'Contando por ciclo de gale: a % é de ciclos ganhos (ganhou na entrada ou em algum gale) sobre os ' +
+        'ciclos com resultado, comparada com o mínimo por ciclo. Os números, gráficos e tabelas desta tela ficam só com ' + cyc.strategies.map(label).join(', ') +
+        '; em "Acerto por estratégia" cada uma aparece com o mínimo dela (quem não usa gale, contado por ordem).' +
+        (cyc.in_progress ? ' Um ciclo está em andamento e ainda não entra na conta.' : '') : '';
       renderKpis('d', st, true);
+      if (cyc) {
+        $('#d-n-sub').textContent = intFmt.format(cyc.won) + ' ciclos ganhos · ' + intFmt.format(cyc.lost_cycles) + ' perdido' +
+          (cyc.lost_cycles === 1 ? '' : 's') + (cyc.lost_cycles ? ' (' + cyc.losses + ' ordens perdidas) · 1 a cada ' + oneFmt.format(cyc.every_n) : '') +
+          ' · limite 1 a cada ' + oneFmt.format(cyc.limit_n);
+      }
       $('#d-profit-sub').textContent = 'em dinheiro · só ordens com resultado' + (st.staked ? ' · apostado ' + fmtMoney(st.staked) : '');
       var extra = [[st.open, 'aberta', 'abertas'], [st.not_sent, 'não enviada', 'não enviadas'], [st.no_result, 'sem resultado', 'sem resultado']]
         .filter(function (x) { return x[0]; }).map(function (x) { return intFmt.format(x[0]) + ' ' + (x[0] === 1 ? x[1] : x[2]); });
@@ -2692,7 +2818,7 @@
       $('#d-cols-title').textContent = GRAN_TITLE[st.granularity] || 'Resultado';
       renderCols(st.timeline);
       renderEquity(st.cumulative, strategy ? strategyColor(strategy) : cssVar('--text-secondary'));
-      renderBars(st.by_strategy, st.breakeven);
+      renderBars(st.by_strategy, st.breakeven, !!st.cycle);
       var be = st.breakeven;
       $('#d-setups').innerHTML = st.by_setup.length ? st.by_setup.map(function (g) {
         var parts = g.key.split('|');
@@ -2767,11 +2893,12 @@
     if (!empty) eqChart.timeScale().fitContent();
   }
 
-  function renderBars(groups, be) {
+  function renderBars(groups, be, perGroup) {  // perGroup: cada estratégia com o mínimo dela (contagem por ciclo)
     var el = $('#d-bars');
     if (!groups.length) { el.innerHTML = '<div class="empty-state">Nenhuma ordem no período.</div>'; return; }
     var html = groups.map(function (g, i) {
-      var wr = (g.winrate || 0) * 100, lo = (g.ci_low || 0) * 100, hi = (g.ci_high || 0) * 100, b = (be || 0) * 100;
+      var gbe = perGroup && g.breakeven != null ? g.breakeven : be;
+      var wr = (g.winrate || 0) * 100, lo = (g.ci_low || 0) * 100, hi = (g.ci_high || 0) * 100, b = (gbe || 0) * 100;
       return '<div class="bar-row" tabindex="0" data-i="' + i + '">' +
         '<div class="bar-label">' + stratHtml(g.key) + '</div>' +
         '<div class="bar-track">' +
@@ -2785,7 +2912,7 @@
     }).join('');
     html += '<div class="bar-axis"><span></span><div class="bar-axis-track">' +
       [0, 25, 50, 75, 100].map(function (v) { return '<span style="left:' + v + '%">' + v + '%</span>'; }).join('') +
-      '</div><span>traço = empate ' + fmtPct(be) + '</span></div>';
+      '</div><span>' + (perGroup ? 'traço = mínimo de cada uma' : 'traço = empate ' + fmtPct(be)) + '</span></div>';
     el.innerHTML = html;
     Array.prototype.forEach.call(el.querySelectorAll('.bar-row'), function (row) {
       var g = groups[parseInt(row.dataset.i, 10)];
@@ -2827,7 +2954,9 @@
     esticao: 'nova (08/11), dos dados · depois de vela grande, o preço dispara 1,5 ATR nos 10 s iniciais e entra contra · 73% no estudo, 44-61% na conferência (poucas entradas) · vale nos pares normais, não no OTC · só observar',
     deeplob_iq: 'nova (08/11) · rede DeepLOB lendo as últimas 100 velas de 5 s · reprovada no estudo: 48,2% em 1.787 nos pares normais; OTC sem sinal (fica em silêncio) · observando ao vivo com limiar 0,52 · só observar',
     bb_rci: 'nova (09/11) · Bollinger 20/2 tocada com RCI 9 em ±80, entra contra no início da vela seguinte · cara ou coroa no estudo: 50,0% (33.841) nos pares normais e 50,1% (33.388) no OTC; martingale aumentou o prejuízo · dispara ~1 vez a cada 8 min por par',
-    bb_rci_v2: 'nova (09/11) · a v1 só quando o Gator está dormindo, o MACD virando a favor e, nos pares normais, a onda do Weis Wave mais fraca que a anterior (no OTC não há volume) · medindo no ao vivo: vira Operar se fizer 5 pontos a mais que a v1 em 150+ entradas · só observar'
+    bb_rci_v2: 'nova (09/11) · a v1 só quando o Gator está dormindo, o MACD virando a favor e, nos pares normais, a onda do Weis Wave mais fraca que a anterior (no OTC não há volume) · medindo no ao vivo: vira Operar se fizer 5 pontos a mais que a v1 em 150+ entradas · só observar',
+    virada_tarde: 'Padrão Moratz (10/11) · só pares -op, entrada das 16:00 às 17:59 de Nova York (hoje 18h–19h59 de Brasília) · vela que fecha colada na máxima → PUT, colada na mínima → CALL · 55% na conferência entrando na abertura, ~52% entrando após 5 s (empate 54,6%)',
+    bb_rci_ny: 'nova (11/11) · a mesma Bollinger + RCI, só das 17:00 às 17:59 de Nova York (hoje 19h de Brasília), no fechamento do forex · só pares -op · nessa hora: 53,4% na descoberta e 57,4% na conferência entrando na abertura; o dia todo dá 50%'
   };
   var STATE_LABELS = { off: 'Desligada', observe: 'Observar', operate: 'Operar' };
   function renderStrategyChoices(cfg) {
@@ -2882,6 +3011,9 @@
     $('#cfg-stake').value = cfg.stake;
     $('#cfg-stop-win').value = cfg.stop_win == null ? '' : cfg.stop_win;
     $('#cfg-stop-loss').value = cfg.stop_loss == null ? '' : cfg.stop_loss;
+    $('#cfg-trail-row').hidden = cfg.stop_loss_trail === undefined;  // servidor antigo: sem stop loss que acompanha o lucro
+    $('#cfg-stop-loss-trail').checked = !!cfg.stop_loss_trail;
+    renderTrailExample();
     $('#cfg-max-trades').value = cfg.max_trades == null ? '' : cfg.max_trades;
     $('#cfg-max-losses').value = cfg.max_consecutive_losses == null ? '' : cfg.max_consecutive_losses;
     $('#cfg-min-payout').value = cfg.min_payout == null ? '' : Math.round(cfg.min_payout * 100);
@@ -2893,6 +3025,11 @@
     $('#cfg-max-lost-cycles').value = cfg.max_lost_cycles == null ? '' : cfg.max_lost_cycles;
     $('#cfg-auto-market-row').hidden = cfg.auto_market == null;  // servidor antigo: sem a opção
     $('#cfg-auto-market').checked = cfg.auto_market === true;
+    $('#cfg-market-mode-row').hidden = cfg.market_mode == null || cfg.auto_market == null;  // servidor antigo: sem a escolha
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="cfg-market-mode"]'), function (r) {
+      r.checked = r.value === (cfg.market_mode || 'por_par');
+    });
+    renderMarketModeState();
     $('#cfg-option-row').hidden = cfg.option_type == null;
     Array.prototype.forEach.call(document.querySelectorAll('input[name="cfg-option"]'), function (r) { r.checked = r.value === cfg.option_type; });
     $('#cfg-max-assets').textContent = maxAssets();
@@ -2910,6 +3047,11 @@
       return '<label><input type="checkbox" name="cfg-gale-strat" value="' + esc(name) + '"' + (on ? ' checked' : '') + '>' +
         '<span>' + dotHtml(name) + esc(label(name)) + '</span></label>';
     }).join('');
+  }
+  // O jeito da troca só vale com a troca automática ligada.
+  function renderMarketModeState() {
+    var on = $('#cfg-auto-market').checked;
+    Array.prototype.forEach.call(document.querySelectorAll('input[name="cfg-market-mode"]'), function (r) { r.disabled = !on; });
   }
   function galeStake(base, cycleLoss, payout) { return Math.ceil((cycleLoss + base * payout) / payout * 100) / 100; }
   function renderGaleExample() {
@@ -2984,7 +3126,10 @@
     var stake = numField('#cfg-stake');
     if (stake != null) patch.stake = stake;
     if (!$('#cfg-auto-market-row').hidden) patch.auto_market = $('#cfg-auto-market').checked;
+    var marketMode = document.querySelector('input[name="cfg-market-mode"]:checked');
+    if (!$('#cfg-market-mode-row').hidden && marketMode) patch.market_mode = marketMode.value;
     if (!$('#cfg-max-cycles-row').hidden) patch.max_lost_cycles = numField('#cfg-max-lost-cycles');
+    if (!$('#cfg-trail-row').hidden) patch.stop_loss_trail = $('#cfg-stop-loss-trail').checked;
     if (!$('#cfg-gale-strats-row').hidden) {
       patch.gale_strategies = Array.prototype.map.call(document.querySelectorAll('input[name="cfg-gale-strat"]:checked'),
         function (c) { return c.value; });
@@ -3340,9 +3485,14 @@
     });
     $('#cfg-asset-add').addEventListener('click', addPair);
     $('#cfg-asset-new').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); addPair(); } });
+    $('#cfg-auto-market').addEventListener('change', renderMarketModeState);
     ['#cfg-martingale', '#cfg-gale-levels', '#cfg-stake'].forEach(function (id) {
       $(id).addEventListener('input', renderGaleExample);
       $(id).addEventListener('change', renderGaleExample);
+    });
+    ['#cfg-stop-loss', '#cfg-stop-loss-trail'].forEach(function (id) {
+      $(id).addEventListener('input', renderTrailExample);
+      $(id).addEventListener('change', renderTrailExample);
     });
     document.addEventListener('click', unlockAudio, { once: true });
     $('#btn-theme').addEventListener('click', function () { applyTheme(root().dataset.theme === 'dark' ? 'light' : 'dark'); });
@@ -3392,7 +3542,18 @@
       applyMarkers();
       renderRetro();
     });
+    $('#d-cycle').addEventListener('change', function (e) {
+      state.byCycle = e.target.checked;
+      saveStored('botbene-painel-ciclo', state.byCycle);
+      refreshDesempenho();
+    });
     $('#p-scope').addEventListener('change', function (e) {
+      if (e.target.id === 'p-strategy') {
+        state.pStrategy = e.target.value;
+        saveStored('botbene-painel-estrategia', state.pStrategy);
+        renderOrderStats();
+        return;
+      }
       if (e.target.id === 'p-cycle') {
         state.byCycle = e.target.checked;
         saveStored('botbene-painel-ciclo', state.byCycle);

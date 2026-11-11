@@ -372,3 +372,64 @@ def test_troca_ligada_por_padrao_e_desligada_pela_tela(tmp_path):
         assert client.get("/api/status").json()["auto_market"] is True
         assert client.put("/api/config", json={"auto_market": False}).json()["auto_market"] is False
         assert client.get("/api/status").json()["auto_market"] is False
+
+
+# ---------------------------------------------------------------- "normal primeiro" (09/11/2026)
+
+from app.service.market import market_targets, normal_first_targets  # noqa: E402
+
+TWO_OTC = ["EURUSD-OTC", "GBPUSD-OTC"]
+TWO_OP = ["EURUSD-op", "GBPUSD-op"]
+
+
+def test_normal_primeiro_com_um_normal_aberto_todos_vao_para_o_normal():
+    pairs = by_asset(p("EURUSD-OTC"), p("EURUSD-op"), p("GBPUSD-OTC"), p("GBPUSD-op", open_=False))
+    got = normal_first_targets(TWO_OTC, pairs, NOW)
+    assert got == {"EURUSD-OTC": ("EURUSD-op", TO_NORMAL), "GBPUSD-OTC": ("GBPUSD-op", TO_NORMAL)}  # o fechado espera no normal
+    assert normal_first_targets(TWO_OP, pairs, NOW) == {"EURUSD-op": None, "GBPUSD-op": None}
+
+
+def test_normal_primeiro_so_vai_para_o_otc_quando_todos_fecham():
+    closed = by_asset(p("EURUSD-OTC"), p("EURUSD-op", open_=False), p("GBPUSD-OTC"), p("GBPUSD-op", open_=False))
+    assert normal_first_targets(TWO_OP, closed, NOW) == {"EURUSD-op": ("EURUSD-OTC", TO_OTC), "GBPUSD-op": ("GBPUSD-OTC", TO_OTC)}
+    soon = by_asset(p("EURUSD-OTC"), p("EURUSD-op", open_=False, next_open=NOW + 10 * 60), p("GBPUSD-OTC"),
+                    p("GBPUSD-op", open_=False))
+    assert normal_first_targets(TWO_OP, soon, NOW) == {"EURUSD-op": None, "GBPUSD-op": None}  # um reabre logo: espera
+
+
+def test_normal_primeiro_nao_conta_normal_que_fecha_logo_ou_paga_pouco():
+    closing = by_asset(p("EURUSD-OTC"), p("EURUSD-op", next_close=NOW + 10 * 60), p("GBPUSD-OTC"), p("GBPUSD-op", open_=False))
+    assert normal_first_targets(TWO_OP, closing, NOW)["GBPUSD-op"] == ("GBPUSD-OTC", TO_OTC)
+    low = by_asset(p("EURUSD-OTC"), p("EURUSD-op", payout=0.70), p("GBPUSD-OTC"), p("GBPUSD-op", open_=False))
+    assert normal_first_targets(TWO_OP, low, NOW, min_payout=0.80)["EURUSD-op"] == ("EURUSD-OTC", TO_OTC)
+
+
+def test_cada_par_sozinho_continua_igual():
+    pairs = by_asset(p("EURUSD-OTC"), p("EURUSD-op"), p("GBPUSD-OTC"), p("GBPUSD-op", open_=False))
+    assert market_targets(TWO_OTC, pairs, NOW) == {a: market_target(a, pairs, NOW) for a in TWO_OTC}
+    assert market_targets(TWO_OTC, pairs, NOW)["GBPUSD-OTC"] is None  # par a par: o fechado fica no OTC
+
+
+def test_normal_primeiro_no_bot(tmp_path, stop_after):
+    bot, broker, _ = market_bot(tmp_path, [p("EURUSD-OTC"), p("EURUSD-op"), p("GBPUSD-OTC"), p("GBPUSD-op", open_=False)])
+    bot.config.update({"market_mode": "normal_primeiro"})
+    bot.apply_config(bot.config.get())
+    stop_after(bot)
+    bot.start(TWO_OTC, 60)
+    assert wait_for(lambda: bot.status == "rodando")
+    assert sorted(bot.runners) == TWO_OP  # GBPUSD fica no normal fechado, esperando
+    snap = bot.snapshot()
+    assert snap["market_mode"] == "normal_primeiro"
+    assert {s["reason"] for s in snap["market_swaps"]} == {"normal primeiro: há par normal aberto"}
+    broker.pair_list = [p("EURUSD-OTC"), p("EURUSD-op", open_=False), p("GBPUSD-OTC"), p("GBPUSD-op", open_=False)]
+    assert wait_for(lambda: sorted(bot.runners) == TWO_OTC)  # todos os normais fecharam: tudo para o OTC
+    assert bot.snapshot()["market_swaps"][0]["reason"] == "normal primeiro: todos os pares normais fecharam"
+
+
+def test_jeito_da_troca_na_configuracao(tmp_path):
+    from tests.test_config import make_client
+    with make_client(tmp_path) as client:
+        assert client.get("/api/config").json()["market_mode"] == "por_par"
+        r = client.put("/api/config", json={"market_mode": "normal_primeiro"})
+        assert r.status_code == 200 and r.json()["market_mode"] == "normal_primeiro"
+        assert client.put("/api/config", json={"market_mode": "outro"}).status_code == 422

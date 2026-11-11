@@ -99,7 +99,8 @@ class ArmedSetup:
     def setup_label(self) -> str:
         trig = {"retracao": "retração", "reversao": "reversão", "throwback": "throwback",
                 "comando": "retração no comando", "score": "score", "esticao": "esticão", "deeplob": "DeepLOB",
-                "bb_rci": "Bollinger + RCI", "bb_rci_v2": "Bollinger + RCI v2"}[self.trigger]
+                "bb_rci": "Bollinger + RCI", "bb_rci_v2": "Bollinger + RCI v2",
+                "virada_tarde": "Virada da Tarde"}[self.trigger]
         return f"{trig} · {self.level_sources[0]}" if self.level_sources else trig
 
     def level_for_open(self, open_price: float) -> float:

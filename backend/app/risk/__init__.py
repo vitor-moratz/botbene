@@ -18,6 +18,11 @@ máximo de entradas e perdas seguidas continuam valendo para todas juntas.
 
 Stop de ciclo (`max_lost_cycles`): para de abrir entradas depois de N ciclos de gale perdidos inteiros na sessão
 (perdeu a entrada e todos os gales), somando todas as estratégias.
+
+Stop loss que acompanha o lucro (`stop_loss_trail`, 10/11/2026): o limite passa a contar do melhor resultado da sessão
+(fechado), e não do Iniciar. Com stop loss de 50, a sessão que chegou a +80 para de abrir ordens se puder cair abaixo de
++30. Antes de ter lucro vale igual ao normal (até -50 desde o Iniciar): o piso só sobe, nunca desce. Quando o piso
+sobe, o resultado está no melhor ponto, então sobra o stop loss inteiro para os gales dos ciclos abertos.
 """
 
 from __future__ import annotations
@@ -36,6 +41,7 @@ class RiskConfig:
     stake: float = 2.0  # valor de cada entrada (moeda da conta)
     stop_win: float | None = 20.0  # para a sessão ao ganhar isto
     stop_loss: float | None = 20.0  # para a sessão ao perder isto
+    stop_loss_trail: bool = False  # o stop loss conta do melhor resultado da sessão (protege o lucro), não do Iniciar
     max_trades: int | None = 30
     max_consecutive_losses: int | None = 4
     martingale: bool = False
@@ -80,6 +86,7 @@ class RiskManager:
         self.open_amount: Counter = Counter()  # valor aberto por estratégia
         self.cycles: dict[str | None, GaleCycle] = {}  # ciclo de gale em andamento de cada estratégia
         self.lost_cycles = 0  # ciclos de gale perdidos inteiros na sessão
+        self.peak_pnl = 0.0  # melhor resultado fechado da sessão (o stop loss que acompanha o lucro conta daqui)
 
     # ------------------------------------------------------------------ quem usa o gale
 
@@ -177,6 +184,14 @@ class RiskManager:
 
     # ------------------------------------------------------------------ pode operar?
 
+    @property
+    def stop_floor(self) -> float | None:
+        """Resultado da sessão abaixo do qual nenhuma ordem nova sai (None = sem stop loss)."""
+        if self.cfg.stop_loss is None:
+            return None
+        base = self.peak_pnl if self.cfg.stop_loss_trail else 0.0
+        return round(base - self.cfg.stop_loss, 2)
+
     def check(self, payout: float = 0.85, strategy: str | None = None) -> tuple[bool, str]:
         """Pode abrir mais uma ordem desta estratégia? Inclui as que ainda estão abertas no pior caso (todas perdem)
         e os gales que ainda podem vir nos ciclos das outras estratégias."""
@@ -192,9 +207,13 @@ class RiskManager:
             return False, "martingale: esperando o resultado da ordem anterior"
         reserved = self._reserved_by_others(payout, strategy)
         needed = (self.cycle_worst_case(payout, strategy) if gale else c.stake) + reserved
-        if c.stop_loss is not None and worst - needed < -c.stop_loss - 1e-9:
+        floor = self.stop_floor
+        if floor is not None and worst - needed < floor - 1e-9:
             what = "o ciclo de martingale inteiro" if gale and self.cycle(strategy).level == 0 else "mais uma entrada"
             others = " junto com os gales que ainda podem vir em outro ciclo" if reserved else ""
+            if c.stop_loss_trail and self.peak_pnl > 0:
+                return False, (f"stop loss acompanhando o lucro: {what}{others} poderia deixar a sessão abaixo de "
+                               f"{floor:+.2f} (melhor ponto {self.peak_pnl:+.2f} menos {c.stop_loss:.2f})")
             return False, f"stop loss: {what}{others} poderia passar de {c.stop_loss:.2f} de perda"
         if c.max_trades is not None and self.trades + self.open_orders >= c.max_trades:
             return False, f"limite de {c.max_trades} entradas na sessão"
@@ -227,6 +246,7 @@ class RiskManager:
         self._release(amount, strategy)
         self.trades += 1
         self.pnl = round(self.pnl + profit, 2)
+        self.peak_pnl = max(self.peak_pnl, self.pnl)
         if not self.cfg.martingale:
             self.cycles.clear()  # martingale desligado: nenhum ciclo continua
         gale = self.uses_gale(strategy)
@@ -269,4 +289,5 @@ class RiskManager:
                 "losses": self.losses, "consecutive_losses": self.consecutive_losses,
                 "open_orders": self.open_orders, "can_trade": ok, "reason": why,
                 # ciclo mais adiantado (painel antigo); `cycles` traz cada ciclo em andamento, um por estratégia
-                **top, "cycles": cycles, "lost_cycles": self.lost_cycles}
+                **top, "cycles": cycles, "lost_cycles": self.lost_cycles,
+                "peak_pnl": self.peak_pnl, "stop_floor": self.stop_floor}

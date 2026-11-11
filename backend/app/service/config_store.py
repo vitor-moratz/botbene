@@ -52,6 +52,8 @@ class UserConfig(BaseModel):
     stake: float = Field(2.0, ge=1.0, le=10_000)
     stop_win: float | None = Field(20.0, ge=0)
     stop_loss: float | None = Field(20.0, ge=0)
+    # O stop loss acompanha o lucro: conta do melhor resultado da sessão, e não do Iniciar (protege o que já ganhou).
+    stop_loss_trail: bool = False
     max_trades: int | None = Field(30, ge=1, le=10_000)
     max_consecutive_losses: int | None = Field(4, ge=1, le=100)
     martingale: bool = False  # "com análise": o gale só vale para a próxima entrada válida (e aprovada)
@@ -74,6 +76,8 @@ class UserConfig(BaseModel):
     # Troca sozinho entre OTC e mercado normal: opera o "-op" quando ele está aberto e volta para o "-OTC"
     # quando ele fecha (service/market.py). Vale na hora, mesmo com o bot rodando.
     auto_market: bool = True
+    # Jeito da troca: "por_par" (cada par sozinho) ou "normal_primeiro" (OTC só quando todos os normais fecham).
+    market_mode: Literal["por_par", "normal_primeiro"] = "por_par"
 
     @model_validator(mode="before")
     @classmethod
@@ -178,6 +182,7 @@ class UserConfig(BaseModel):
 
     def risk(self) -> RiskConfig:
         return RiskConfig(stake=self.stake, stop_win=self.stop_win or None, stop_loss=self.stop_loss or None,
+                          stop_loss_trail=self.stop_loss_trail,
                           max_trades=self.max_trades, max_consecutive_losses=self.max_consecutive_losses,
                           martingale=self.martingale, gale_levels=self.gale_levels,
                           gale_strategies=tuple(self.gale_strategies), max_lost_cycles=self.max_lost_cycles)
